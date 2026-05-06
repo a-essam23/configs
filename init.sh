@@ -68,7 +68,7 @@ section_info() {
 	case "$1" in
 		nvim)     echo "nvim|${HOME}/.config/nvim" ;;
 		opencode) echo "opencode|${HOME}/.config/opencode" ;;
-		pi-ext)   echo "pi/extensions|${HOME}/.pi/extensions" ;;
+		pi-ext)   echo "pi/extensions|${HOME}/.pi/agent/extensions" ;;
 		*)        echo "" ;;
 	esac
 }
