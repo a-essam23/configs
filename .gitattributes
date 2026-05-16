@@ -1,0 +1,2 @@
+# Auto-merge lazy-lock.json conflicts by taking the newer version
+nvim/lazy-lock.json merge=lazy-lock
