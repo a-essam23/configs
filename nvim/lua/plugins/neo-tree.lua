@@ -14,6 +14,11 @@ return {
 		filesystem = {
 			follow_current_file = { enabled = true }, -- highlight the file you're editing
 			use_libuv_file_watcher = true, -- auto-refresh on filesystem changes
+			filtered_items = {
+				visible = true, -- show hidden files by default
+				hide_dotfiles = false,
+				hide_gitignored = false,
+			},
 		},
 		window = {
 			width = 35,
