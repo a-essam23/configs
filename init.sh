@@ -143,6 +143,27 @@ link_dir() {
 
 	info "[$section] $src → $dst"
 
+	# pi-ext also symlinks memories.json (do this first — independent of extensions state)
+	if [[ "$section" == "pi-ext" ]]; then
+		local mem_src="$REPO_ROOT/pi/memories.json"
+		local mem_dst="${HOME}/.pi/agent/memories.json"
+		local mem_parent
+		mem_parent="$(dirname "$mem_dst")"
+		if [[ ! -d "$mem_parent" ]]; then
+			if "$DRY_RUN"; then
+				dry "would mkdir -p $mem_parent"
+			else
+				mkdir -p "$mem_parent"
+			fi
+		fi
+		if "$DRY_RUN"; then
+			dry "would ln -sfn $mem_src $mem_dst"
+		else
+			ln -sfn "$mem_src" "$mem_dst"
+		fi
+		ok "[pi-ext] memories.json linked"
+	fi
+
 	local state
 	state="$(check_state "$src" "$dst")"
 
@@ -197,27 +218,6 @@ link_dir() {
 	fi
 
 	ok "[$section] linked"
-
-	# pi-ext also symlinks memories.json
-	if [[ "$section" == "pi-ext" ]]; then
-		local mem_src="$REPO_ROOT/pi/memories.json"
-		local mem_dst="${HOME}/.pi/agent/memories.json"
-		local mem_parent
-		mem_parent="$(dirname "$mem_dst")"
-		if [[ ! -d "$mem_parent" ]]; then
-			if "$DRY_RUN"; then
-				dry "would mkdir -p $mem_parent"
-			else
-				mkdir -p "$mem_parent"
-			fi
-		fi
-		if "$DRY_RUN"; then
-			dry "would ln -sfn $mem_src $mem_dst"
-		else
-			ln -sfn "$mem_src" "$mem_dst"
-		fi
-		ok "[pi-ext] memories.json linked"
-	fi
 }
 
 # ─── Risk scanning ──────────────────────────────────────────
