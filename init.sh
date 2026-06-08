@@ -197,6 +197,27 @@ link_dir() {
 	fi
 
 	ok "[$section] linked"
+
+	# pi-ext also symlinks memories.json
+	if [[ "$section" == "pi-ext" ]]; then
+		local mem_src="$REPO_ROOT/pi/memories.json"
+		local mem_dst="${HOME}/.pi/agent/memories.json"
+		local mem_parent
+		mem_parent="$(dirname "$mem_dst")"
+		if [[ ! -d "$mem_parent" ]]; then
+			if "$DRY_RUN"; then
+				dry "would mkdir -p $mem_parent"
+			else
+				mkdir -p "$mem_parent"
+			fi
+		fi
+		if "$DRY_RUN"; then
+			dry "would ln -sfn $mem_src $mem_dst"
+		else
+			ln -sfn "$mem_src" "$mem_dst"
+		fi
+		ok "[pi-ext] memories.json linked"
+	fi
 }
 
 # ─── Risk scanning ──────────────────────────────────────────
@@ -247,6 +268,23 @@ show_status() {
 				;;
 		esac
 	done
+
+	# Also show memories symlink under pi-ext
+	local mem_src="$REPO_ROOT/pi/memories.json"
+	local mem_dst="${HOME}/.pi/agent/memories.json"
+	local mem_state
+	mem_state="$(check_state "$mem_src" "$mem_dst")"
+	case "$mem_state" in
+		linked)
+			printf "%-10s ${GREEN}%-12s${NC} → %s\n" "memories" "linked" "$mem_src" ;;
+		real)
+			printf "%-10s ${YELLOW}%-12s${NC} %s\n" "memories" "real" "$mem_dst" ;;
+		missing)
+			printf "%-10s ${RED}%-12s${NC}\n" "memories" "missing" ;;
+		wrong-link)
+			printf "%-10s ${RED}%-12s${NC} → %s\n" "memories" "wrong-link" "$(resolve_link "$mem_dst")" ;;
+	esac
+
 	echo
 }
 
