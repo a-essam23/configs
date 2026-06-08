@@ -143,12 +143,9 @@ link_dir() {
 
 	info "[$section] $src → $dst"
 
-	# pi-ext also symlinks memories.json (do this first — independent of extensions state)
+	# pi-ext also symlinks all pi/*.json to ~/.pi/agent/ (do this first)
 	if [[ "$section" == "pi-ext" ]]; then
-		local mem_src="$REPO_ROOT/pi/memories.json"
-		local mem_dst="${HOME}/.pi/agent/memories.json"
-		local mem_parent
-		mem_parent="$(dirname "$mem_dst")"
+		local mem_parent="${HOME}/.pi/agent"
 		if [[ ! -d "$mem_parent" ]]; then
 			if "$DRY_RUN"; then
 				dry "would mkdir -p $mem_parent"
@@ -156,12 +153,18 @@ link_dir() {
 				mkdir -p "$mem_parent"
 			fi
 		fi
-		if "$DRY_RUN"; then
-			dry "would ln -sfn $mem_src $mem_dst"
-		else
-			ln -sfn "$mem_src" "$mem_dst"
-		fi
-		ok "[pi-ext] memories.json linked"
+		for json_file in "$REPO_ROOT"/pi/*.json; do
+			[[ -f "$json_file" ]] || continue
+			local fname
+			fname="$(basename "$json_file")"
+			local mem_dst="${HOME}/.pi/agent/${fname}"
+			if "$DRY_RUN"; then
+				dry "would ln -sfn $json_file $mem_dst"
+			else
+				ln -sfn "$json_file" "$mem_dst"
+			fi
+			ok "[pi-ext] ${fname} linked"
+		done
 	fi
 
 	local state
@@ -269,21 +272,26 @@ show_status() {
 		esac
 	done
 
-	# Also show memories symlink under pi-ext
-	local mem_src="$REPO_ROOT/pi/memories.json"
-	local mem_dst="${HOME}/.pi/agent/memories.json"
-	local mem_state
-	mem_state="$(check_state "$mem_src" "$mem_dst")"
-	case "$mem_state" in
-		linked)
-			printf "%-10s ${GREEN}%-12s${NC} → %s\n" "memories" "linked" "$mem_src" ;;
-		real)
-			printf "%-10s ${YELLOW}%-12s${NC} %s\n" "memories" "real" "$mem_dst" ;;
-		missing)
-			printf "%-10s ${RED}%-12s${NC}\n" "memories" "missing" ;;
-		wrong-link)
-			printf "%-10s ${RED}%-12s${NC} → %s\n" "memories" "wrong-link" "$(resolve_link "$mem_dst")" ;;
-	esac
+	# Also show all pi/*.json symlinks
+	for json_file in "$REPO_ROOT"/pi/*.json; do
+		[[ -f "$json_file" ]] || continue
+		local fname label
+		fname="$(basename "$json_file")"
+		label="${fname%.json}"
+		local mem_dst="${HOME}/.pi/agent/${fname}"
+		local mem_state
+		mem_state="$(check_state "$json_file" "$mem_dst")"
+		case "$mem_state" in
+			linked)
+				printf "%-10s ${GREEN}%-12s${NC} → %s\n" "$label" "linked" "$json_file" ;;
+			real)
+				printf "%-10s ${YELLOW}%-12s${NC} %s\n" "$label" "real" "$mem_dst" ;;
+			missing)
+				printf "%-10s ${RED}%-12s${NC}\n" "$label" "missing" ;;
+			wrong-link)
+				printf "%-10s ${RED}%-12s${NC} → %s\n" "$label" "wrong-link" "$(resolve_link "$mem_dst")" ;;
+		esac
+	done
 
 	echo
 }
