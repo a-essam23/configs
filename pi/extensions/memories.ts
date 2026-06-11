@@ -204,7 +204,7 @@ const SaveParams = Type.Object({
 const RecallParams = Type.Object({
   query: Type.Optional(
     Type.String({
-      description: "Search term — fuzzy match against content and key",
+      description: "Search term — tokens are fuzzy-matched against content and key",
     }),
   ),
   key: Type.Optional(
@@ -504,7 +504,7 @@ export default function (pi: ExtensionAPI) {
     name: "recall_memories",
     label: "Recall Memories",
     description:
-      "Search saved memories. Core memories are already shown above; use this for the rest.",
+      "Search saved memories with token-based fuzzy matching. Core memories are already shown above; use this for the rest.",
     promptSnippet: "Search saved user preferences and project conventions",
     promptGuidelines: [
       "Use recall_memories at the start of a session or when you need to check for relevant user preferences, past decisions, or project conventions before acting.",
@@ -523,26 +523,39 @@ export default function (pi: ExtensionAPI) {
       if (scope === "global" || scope === "both") candidates.push(...globalMemories);
       if (scope === "local" || scope === "both") candidates.push(...localMemories);
 
-      // Filter
-      if (params.query || params.key) {
-        const q = params.query?.toLowerCase();
+      // Filter with token-based fuzzy matching
+      const tokens = params.query
+        ? params.query.toLowerCase().split(/\s+/).filter(Boolean)
+        : [];
+      if (tokens.length > 0 || params.key) {
         const k = params.key;
         candidates = candidates.filter((m) => {
           if (k !== undefined && m.key !== k) return false;
-          if (q) {
-            const inContent = m.content.toLowerCase().includes(q);
-            const inKey = (m.key ?? "").toLowerCase().includes(q);
-            if (!inContent && !inKey) return false;
-          }
-          return true;
+          if (tokens.length === 0) return true;
+          const haystack = `${m.content} ${m.key ?? ""}`.toLowerCase();
+          return tokens.every((t) => haystack.includes(t));
         });
+
+        // Sort by relevance: more token matches ranked higher
+        if (tokens.length > 0) {
+          candidates.sort((a, b) => {
+            const ha = `${a.content} ${a.key ?? ""}`.toLowerCase();
+            const hb = `${b.content} ${b.key ?? ""}`.toLowerCase();
+            const sa = tokens.filter((t) => ha.includes(t)).length;
+            const sb = tokens.filter((t) => hb.includes(t)).length;
+            if (sb !== sa) return sb - sa;
+            return a.content.length - b.content.length;
+          });
+        }
       }
 
-      // Newest first
-      candidates.sort(
-        (a, b) =>
-          new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
-      );
+      // Sort: by relevance if query provided, else newest first
+      if (!tokens || tokens.length === 0) {
+        candidates.sort(
+          (a, b) =>
+            new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+        );
+      }
 
       const results = candidates.slice(0, limit);
 

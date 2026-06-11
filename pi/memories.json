@@ -5,5 +5,12 @@
     "key": "coding-style",
     "type": "core",
     "timestamp": "2026-06-05T02:48:45.932Z"
+  },
+  {
+    "id": "global:9e7a0364-a492-489c-b186-fd4d03c3eeee",
+    "content": "When using the edit tool, never construct oldText from memory. Always read the file immediately before editing (same turn or previous assistant message). Copy oldText verbatim from the read output — do not reconstruct it. If the file has been edited since the last read, re-read the exact region first. Never retry the same oldText after a \"not found\" error without re-reading the file.",
+    "key": "edit-discipline",
+    "type": "core",
+    "timestamp": "2026-06-09T03:34:38.524Z"
   }
 ]

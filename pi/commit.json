@@ -1,0 +1,10 @@
+{
+  "model": "deepseek/deepseek-v4-flash",
+  "recentMessages": 12,
+  "maxDiffChars": 90000,
+  "maxHistoryChars": 24000,
+  "maxSummaryChars": 12000,
+  "editMessage": true,
+  "confirm": false,
+  "conventionalCommit": true
+}
