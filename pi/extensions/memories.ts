@@ -83,6 +83,24 @@ function parseId(id: string): { scope: MemoryScope; uuid: string } | null {
   return { scope: m[1] as MemoryScope, uuid: m[2] };
 }
 
+// Dice coefficient on character bigrams for fuzzy matching
+function bigrams(s: string): Set<string> {
+  const b = new Set<string>();
+  for (let i = 0; i < s.length - 1; i++) b.add(s.slice(i, i + 2));
+  return b;
+}
+
+function diceCoefficient(a: string, b: string): number {
+  if (a === b) return 1;
+  if (a.includes(b) || b.includes(a)) return 0.9;
+  const ba = bigrams(a);
+  const bb = bigrams(b);
+  if (ba.size === 0 && bb.size === 0) return 0;
+  let overlap = 0;
+  for (const bg of ba) if (bb.has(bg)) overlap++;
+  return (2 * overlap) / (ba.size + bb.size);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // In-memory cache & session state
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -517,7 +535,8 @@ export default function (pi: ExtensionAPI) {
       reloadAll(ctx.cwd);
 
       const scope = params.scope ?? "both";
-      const limit = params.limit ?? 10;
+      const hasQuery = !!params.query;
+      const limit = params.limit ?? (hasQuery ? 20 : 0); // 0 = no limit
 
       let candidates: Memory[] = [];
       if (scope === "global" || scope === "both") candidates.push(...globalMemories);
@@ -529,24 +548,30 @@ export default function (pi: ExtensionAPI) {
         : [];
       if (tokens.length > 0 || params.key) {
         const k = params.key;
-        candidates = candidates.filter((m) => {
-          if (k !== undefined && m.key !== k) return false;
-          if (tokens.length === 0) return true;
-          const haystack = `${m.content} ${m.key ?? ""}`.toLowerCase();
-          return tokens.every((t) => haystack.includes(t));
-        });
 
-        // Sort by relevance: more token matches ranked higher
-        if (tokens.length > 0) {
-          candidates.sort((a, b) => {
-            const ha = `${a.content} ${a.key ?? ""}`.toLowerCase();
-            const hb = `${b.content} ${b.key ?? ""}`.toLowerCase();
-            const sa = tokens.filter((t) => ha.includes(t)).length;
-            const sb = tokens.filter((t) => hb.includes(t)).length;
-            if (sb !== sa) return sb - sa;
-            return a.content.length - b.content.length;
-          });
-        }
+        // Score each candidate, then filter + sort
+        const scored = candidates
+          .map((m) => {
+            if (k !== undefined && m.key !== k) return { mem: m, score: -1 };
+            if (tokens.length === 0) return { mem: m, score: 1 };
+            const haystack = `${m.content} ${m.key ?? ""}`.toLowerCase();
+            const words = haystack.split(/\s+/);
+            let totalScore = 0;
+            for (const token of tokens) {
+              let best = 0;
+              for (const word of words) {
+                const s = diceCoefficient(token, word);
+                if (s > best) best = s;
+              }
+              if (best < 0.5) return { mem: m, score: -1 }; // token didn't match
+              totalScore += best;
+            }
+            return { mem: m, score: totalScore };
+          })
+          .filter((s) => s.score >= 0);
+
+        scored.sort((a, b) => b.score - a.score);
+        candidates = scored.map((s) => s.mem);
       }
 
       // Sort: by relevance if query provided, else newest first
@@ -557,7 +582,7 @@ export default function (pi: ExtensionAPI) {
         );
       }
 
-      const results = candidates.slice(0, limit);
+      const results = limit > 0 ? candidates.slice(0, limit) : candidates;
 
       if (results.length === 0) {
         return {
