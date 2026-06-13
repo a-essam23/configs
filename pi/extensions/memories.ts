@@ -13,7 +13,7 @@
  *   global -> ~/.pi/agent/memories.json
  *   local  -> <cwd>/.pi/memories.json
  *
- * Tools:     save_memory, recall_memories, delete_memory, update_memory
+ * Tools:     save_memory, list_memories, read_memories, recall_memories, delete_memory, update_memory
  * Commands:  /memories (view all), /memory add (quick add)
  * Widget:    Shows live memory counts below the editor
  */
@@ -101,6 +101,109 @@ function diceCoefficient(a: string, b: string): number {
   return (2 * overlap) / (ba.size + bb.size);
 }
 
+type MemoryScopeFilter = "global" | "local" | "both";
+type MemoryTypeFilter = "core" | "regular" | "both";
+
+interface MemorySelectionParams {
+  ids?: string[];
+  keys?: string[];
+  slugs?: string[];
+  key?: string;
+  query?: string;
+  scope?: MemoryScopeFilter;
+  type?: MemoryTypeFilter;
+  limit?: number;
+}
+
+function scopeOf(memory: Memory): MemoryScope {
+  return memory.id.startsWith("global:") ? "global" : "local";
+}
+
+function queryTokens(query?: string): string[] {
+  return query ? query.toLowerCase().split(/\s+/).filter(Boolean) : [];
+}
+
+function memorySearchScore(memory: Memory, tokens: string[]): number {
+  if (tokens.length === 0) return 1;
+
+  const haystack = `${memory.content} ${memory.key ?? ""}`.toLowerCase();
+  const words = haystack.split(/\s+/).filter(Boolean);
+  let totalScore = 0;
+
+  for (const token of tokens) {
+    let best = 0;
+    for (const word of words) {
+      const score = diceCoefficient(token, word);
+      if (score > best) best = score;
+    }
+    if (best < 0.5) return -1;
+    totalScore += best;
+  }
+
+  return totalScore;
+}
+
+function selectMemories(params: MemorySelectionParams): Memory[] {
+  const scope = params.scope ?? "both";
+  const type = params.type ?? "both";
+  const limit = params.limit ?? 0; // 0 = no limit
+  const ids = new Set(params.ids ?? []);
+  const keys = new Set([...(params.keys ?? []), ...(params.slugs ?? []), ...(params.key ? [params.key] : [])]);
+  const tokens = queryTokens(params.query);
+
+  let candidates = allMemories().filter((memory) => {
+    const memoryScope = scopeOf(memory);
+    if (scope !== "both" && memoryScope !== scope) return false;
+    if (type !== "both" && memory.type !== type) return false;
+    if (ids.size > 0 || keys.size > 0) {
+      return ids.has(memory.id) || (memory.key !== undefined && keys.has(memory.key));
+    }
+    return true;
+  });
+
+  if (tokens.length > 0) {
+    const scored = candidates
+      .map((memory) => ({ memory, score: memorySearchScore(memory, tokens) }))
+      .filter((entry) => entry.score >= 0);
+    scored.sort((a, b) => b.score - a.score);
+    candidates = scored.map((entry) => entry.memory);
+  } else {
+    candidates.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  }
+
+  return limit > 0 ? candidates.slice(0, limit) : candidates;
+}
+
+function selectWithLimit(params: MemorySelectionParams): { results: Memory[]; total: number } {
+  const matches = selectMemories({ ...params, limit: 0 });
+  const limit = params.limit ?? 0;
+  return {
+    results: limit > 0 ? matches.slice(0, limit) : matches,
+    total: matches.length,
+  };
+}
+
+function memoryKey(memory: Memory): string {
+  return memory.key ?? memory.id;
+}
+
+function formatMemoryList(memories: Memory[], total: number): string {
+  if (memories.length === 0) return "No memories found.";
+  const lines = memories.map((memory) => `- ${memoryKey(memory)} [${scopeOf(memory)}, ${memory.type}]`);
+  const suffix = total > memories.length ? ` (of ${total} total)` : "";
+  return `${memories.length} memories${suffix}:\n\n${lines.join("\n")}`;
+}
+
+function formatMemoryContent(memories: Memory[], total: number): string {
+  if (memories.length === 0) return "No memories found.";
+  const lines = memories.map((memory) => {
+    const badges = `[${scopeOf(memory)}] [${memory.type}]${memory.key ? ` [${memory.key}]` : ""}`;
+    return `- \`${memory.id}\` ${badges}: ${memory.content}`;
+  });
+  const suffix = total > memories.length ? ` (of ${total} total)` : "";
+  return `${memories.length} memories${suffix}:\n\n${lines.join("\n")}`;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // In-memory cache & session state
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -185,7 +288,7 @@ function buildMemoriesSection(): string {
   if (keys.length > 0) {
     lines.push(`Saved memory keys: ${keys.join(", ")}`);
   }
-  lines.push("Use recall_memories to search, or call with no query to list all. Check before saving to avoid duplicates.");
+  lines.push("Use list_memories to inspect available memories. Use read_memories with exact keys/ids/slugs for full content. Check before saving to avoid duplicates.");
 
   return lines.join("\n");
 }
@@ -219,28 +322,78 @@ const SaveParams = Type.Object({
   ),
 });
 
-const RecallParams = Type.Object({
+const ListParams = Type.Object({
   query: Type.Optional(
     Type.String({
-      description: "Search term — tokens are fuzzy-matched against content and key",
+      description: "Fuzzy search term — tokens are matched against content and key",
     }),
   ),
   key: Type.Optional(
     Type.String({
-      description: "Filter by exact key/category",
+      description: "Filter by exact key/title/slug",
     }),
   ),
   scope: Type.Optional(
     StringEnum(["global", "local", "both"] as const, {
-      description: "Which scopes to search. Default: both.",
+      description: "Which scopes to list. Default: both.",
+    }),
+  ),
+  type: Type.Optional(
+    StringEnum(["core", "regular", "both"] as const, {
+      description: "Which memory types to list. Default: both.",
     }),
   ),
   limit: Type.Optional(
     Type.Number({
-      description: "Max results to return. Default: 10.",
+      description: "Max results to return. Default: 0 (no cap).",
     }),
   ),
 });
+
+const ReadParams = Type.Object({
+  ids: Type.Optional(
+    Type.Array(Type.String(), {
+      description: "Memory IDs to read",
+    }),
+  ),
+  keys: Type.Optional(
+    Type.Array(Type.String(), {
+      description: "Memory keys/titles/slugs to read",
+    }),
+  ),
+  slugs: Type.Optional(
+    Type.Array(Type.String(), {
+      description: "Alias for keys",
+    }),
+  ),
+  key: Type.Optional(
+    Type.String({
+      description: "Single key/title/slug to read",
+    }),
+  ),
+  query: Type.Optional(
+    Type.String({
+      description: "Fuzzy search term — tokens are matched against content and key",
+    }),
+  ),
+  scope: Type.Optional(
+    StringEnum(["global", "local", "both"] as const, {
+      description: "Which scopes to read. Default: both.",
+    }),
+  ),
+  type: Type.Optional(
+    StringEnum(["core", "regular", "both"] as const, {
+      description: "Which memory types to read. Default: both.",
+    }),
+  ),
+  limit: Type.Optional(
+    Type.Number({
+      description: "Max results to return. Default: 0 (no cap).",
+    }),
+  ),
+});
+
+const RecallParams = ReadParams;
 
 const DeleteParams = Type.Object({
   id: Type.Optional(
@@ -446,7 +599,7 @@ export default function (pi: ExtensionAPI) {
       'Use type "regular" for project-specific context, past decisions, or situational preferences.',
       'Use scope "global" for user-wide facts and "local" for project-specific facts.',
       "Only save what is invisible from reading the code — insights, pitfalls, conventions, preferences, and hard-won debugging lessons. Never save architecture descriptions or build-log entries (e.g. 'Moved sidebar to layout level' or 'Added X endpoint'). The code already documents itself.",
-      "Use recall_memories to check for existing similar memories before saving new ones. Do not create duplicates.",
+      "Use list_memories or read_memories to check for existing similar memories before saving new ones. Do not create duplicates.",
     ],
     parameters: SaveParams,
 
@@ -516,127 +669,130 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // ── Tool: recall_memories ──────────────────────────────────────────────
+  // ── Shared memory read/list executors ───────────────────────────────
+
+  async function executeListMemories(params: MemorySelectionParams, ctx: ExtensionContext) {
+    reloadAll(ctx.cwd);
+    const { results, total } = selectWithLimit(params);
+    return {
+      content: [{ type: "text" as const, text: formatMemoryList(results, total) }],
+      details: {
+        results: results.map((memory) => ({
+          id: memory.id,
+          key: memory.key,
+          type: memory.type,
+          scope: scopeOf(memory),
+          timestamp: memory.timestamp,
+        })),
+        count: results.length,
+        total,
+      },
+    };
+  }
+
+  async function executeReadMemories(params: MemorySelectionParams, ctx: ExtensionContext) {
+    reloadAll(ctx.cwd);
+    const { results, total } = selectWithLimit(params);
+    return {
+      content: [{ type: "text" as const, text: formatMemoryContent(results, total) }],
+      details: { results, count: results.length, total },
+    };
+  }
+
+  function renderMemorySearchCall(toolName: string, args: { query?: unknown; key?: unknown; keys?: unknown; slugs?: unknown; ids?: unknown }, theme: Theme) {
+    let label = `${toolName} `;
+    if (typeof args.query === "string") label += theme.fg("muted", `"${args.query}"`);
+    else if (typeof args.key === "string") label += theme.fg("muted", args.key);
+    else if (Array.isArray(args.keys) && args.keys.length > 0) label += theme.fg("muted", args.keys.join(", "));
+    else if (Array.isArray(args.slugs) && args.slugs.length > 0) label += theme.fg("muted", args.slugs.join(", "));
+    else if (Array.isArray(args.ids) && args.ids.length > 0) label += theme.fg("dim", `${args.ids.length} id(s)`);
+    else label += theme.fg("dim", "all");
+    return new Text(theme.fg("toolTitle", theme.bold(label)), 0, 0);
+  }
+
+  function renderMemoryCount(result: { details?: unknown }, theme: Theme, noun = "memories") {
+    const details = result.details as { count?: number; total?: number } | undefined;
+    const count = details?.count ?? 0;
+    const total = details?.total;
+    const suffix = total !== undefined && total !== count ? ` of ${total}` : "";
+    return new Text(theme.fg("success", "✓ ") + theme.fg("muted", `${count}${suffix} ${noun}`), 0, 0);
+  }
+
+  // ── Tool: list_memories ────────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "list_memories",
+    label: "List Memories",
+    description: "List saved memories as a slim key/title index. Supports fuzzy search without returning full content.",
+    promptSnippet: "List saved memory keys/titles with optional fuzzy search",
+    promptGuidelines: [
+      "Use list_memories to inspect available memories without loading full content.",
+      "Use list_memories with no query to list all memory keys/titles.",
+      "Use list_memories with a short fuzzy query to find candidate keys before calling read_memories.",
+    ],
+    parameters: ListParams,
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      return executeListMemories(params, ctx);
+    },
+
+    renderCall(args, theme, _context) {
+      return renderMemorySearchCall("list_memories", args, theme);
+    },
+
+    renderResult(result, _options, theme, _context) {
+      return renderMemoryCount(result, theme, "memories listed");
+    },
+  });
+
+  // ── Tool: read_memories ────────────────────────────────────────────────
+
+  pi.registerTool({
+    name: "read_memories",
+    label: "Read Memories",
+    description: "Read full memory content by id, key/title/slug, or fuzzy query.",
+    promptSnippet: "Read full saved memory content by key/title/slug, id, or fuzzy search",
+    promptGuidelines: [
+      "Use read_memories when you need full memory content. Prefer exact keys/slugs from the system prompt or list_memories.",
+      "Use read_memories with keys or slugs when possible; use query only when the exact key is unknown.",
+    ],
+    parameters: ReadParams,
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      return executeReadMemories(params, ctx);
+    },
+
+    renderCall(args, theme, _context) {
+      return renderMemorySearchCall("read_memories", args, theme);
+    },
+
+    renderResult(result, _options, theme, _context) {
+      return renderMemoryCount(result, theme, "memories read");
+    },
+  });
+
+  // ── Tool: recall_memories (backward-compatible alias) ──────────────────
 
   pi.registerTool({
     name: "recall_memories",
     label: "Recall Memories",
-    description:
-      "Search saved memories with token-based fuzzy matching. Core memories are already shown above; use this for the rest.",
-    promptSnippet: "Search saved user preferences and project conventions",
+    description: "Backward-compatible alias for read_memories. Prefer list_memories/read_memories in new usage.",
+    promptSnippet: "Legacy alias for reading saved memories",
     promptGuidelines: [
-      "Use recall_memories at the start of a session or when you need to check for relevant user preferences, past decisions, or project conventions before acting.",
-      "Core memories are already shown above in the system prompt. Use recall_memories for regular memories and to search for specific topics.",
-      "Call recall_memories with no query to list all memories — don't guess at keys with long multi-word queries.",
+      "Prefer list_memories for discovery and read_memories for full content. recall_memories is a legacy alias.",
     ],
     parameters: RecallParams,
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      reloadAll(ctx.cwd);
-
-      const scope = params.scope ?? "both";
-      const hasQuery = !!params.query;
-      const limit = params.limit ?? (hasQuery ? 20 : 0); // 0 = no limit
-
-      let candidates: Memory[] = [];
-      if (scope === "global" || scope === "both") candidates.push(...globalMemories);
-      if (scope === "local" || scope === "both") candidates.push(...localMemories);
-
-      // Filter with token-based fuzzy matching
-      const tokens = params.query
-        ? params.query.toLowerCase().split(/\s+/).filter(Boolean)
-        : [];
-      if (tokens.length > 0 || params.key) {
-        const k = params.key;
-
-        // Score each candidate, then filter + sort
-        const scored = candidates
-          .map((m) => {
-            if (k !== undefined && m.key !== k) return { mem: m, score: -1 };
-            if (tokens.length === 0) return { mem: m, score: 1 };
-            const haystack = `${m.content} ${m.key ?? ""}`.toLowerCase();
-            const words = haystack.split(/\s+/);
-            let totalScore = 0;
-            for (const token of tokens) {
-              let best = 0;
-              for (const word of words) {
-                const s = diceCoefficient(token, word);
-                if (s > best) best = s;
-              }
-              if (best < 0.5) return { mem: m, score: -1 }; // token didn't match
-              totalScore += best;
-            }
-            return { mem: m, score: totalScore };
-          })
-          .filter((s) => s.score >= 0);
-
-        scored.sort((a, b) => b.score - a.score);
-        candidates = scored.map((s) => s.mem);
-      }
-
-      // Sort: by relevance if query provided, else newest first
-      if (!tokens || tokens.length === 0) {
-        candidates.sort(
-          (a, b) =>
-            new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
-        );
-      }
-
-      const results = limit > 0 ? candidates.slice(0, limit) : candidates;
-
-      if (results.length === 0) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: params.query
-                ? `No memories found matching "${params.query}".`
-                : "No memories found.",
-            },
-          ],
-          details: { results: [], count: 0 },
-        };
-      }
-
-      const lines = results.map((m) => {
-        const scopeLabel = m.id.startsWith("global:") ? "global" : "project";
-        const badges = `[${scopeLabel}]${m.type === "core" ? " [core]" : ""}${m.key ? ` [${m.key}]` : ""}`;
-        return `- \`${m.id}\` ${badges}: ${m.content}`;
-      });
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: `${results.length} memories${candidates.length > results.length ? ` (of ${candidates.length} total)` : ""}:\n\n${lines.join("\n")}`,
-          },
-        ],
-        details: { results, count: results.length },
-      };
+      return executeReadMemories(params, ctx);
     },
 
     renderCall(args, theme, _context) {
-      let label = "recall_memories ";
-      if (args.query) label += theme.fg("muted", `"${args.query}"`);
-      else label += theme.fg("dim", "all");
-      return new Text(
-        theme.fg("toolTitle", theme.bold(label)),
-        0,
-        0,
-      );
+      return renderMemorySearchCall("recall_memories", args, theme);
     },
 
     renderResult(result, _options, theme, _context) {
-      const details = result.details as
-        | { results?: Memory[]; count?: number }
-        | undefined;
-      const count = details?.count ?? 0;
-      return new Text(
-        theme.fg("success", "✓ ") +
-          theme.fg("muted", `${count} memories found`),
-        0,
-        0,
-      );
+      return renderMemoryCount(result, theme, "memories read");
     },
   });
 

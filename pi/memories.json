@@ -12,5 +12,12 @@
     "key": "edit-discipline",
     "type": "core",
     "timestamp": "2026-06-09T03:34:38.524Z"
+  },
+  {
+    "id": "global:34d3bec9-2047-460f-be60-51aaa1289b01",
+    "content": "Before building or debugging, always check relevant memories first — they may have rules, gotchas, or patterns that prevent mistakes.",
+    "key": "check-memories-before-building",
+    "type": "core",
+    "timestamp": "2026-06-13T03:33:13.737Z"
   }
 ]
