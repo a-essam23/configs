@@ -7,7 +7,7 @@
  * itself so the current conversation context is not touched.
  */
 
-import { complete, type Message } from "@earendil-works/pi-ai";
+import { completeSimple, type Message, type ThinkingLevel } from "@earendil-works/pi-ai";
 import {
 	BorderedLoader,
 	getAgentDir,
@@ -22,6 +22,7 @@ import { dirname, join } from "node:path";
 
 interface CommitConfig {
 	model?: string;
+	thinking?: ThinkingLevel | false;
 	recentMessages: number;
 	maxDiffChars: number;
 	maxHistoryChars: number;
@@ -48,6 +49,7 @@ type CommitModel = NonNullable<ExtensionCommandContext["model"]>;
 
 const DEFAULT_CONFIG: CommitConfig = {
 	model: undefined,
+	thinking: false,
 	recentMessages: 12,
 	maxDiffChars: 90_000,
 	maxHistoryChars: 24_000,
@@ -379,7 +381,7 @@ function normalizeCommitMessage(message: string): string {
 		.trim();
 }
 
-function responseText(response: Awaited<ReturnType<typeof complete>>): string {
+function responseText(response: Awaited<ReturnType<typeof completeSimple>>): string {
 	return response.content
 		.filter((content): content is { type: "text"; text: string } => content.type === "text")
 		.map((content) => content.text)
@@ -392,6 +394,7 @@ async function callModel(input: {
 	model: CommitModel;
 	prompt: string;
 	signal?: AbortSignal;
+	reasoning?: ThinkingLevel;
 }): Promise<{ commitMessage: string; historySummary?: string }> {
 	const auth = await input.ctx.modelRegistry.getApiKeyAndHeaders(input.model);
 	if (!auth.ok || !auth.apiKey) {
@@ -404,10 +407,23 @@ async function callModel(input: {
 		timestamp: Date.now(),
 	};
 
-	const response = await complete(
+	const response = await completeSimple(
 		input.model,
 		{ systemPrompt: SYSTEM_PROMPT, messages: [userMessage] },
-		{ apiKey: auth.apiKey, headers: auth.headers, signal: input.signal },
+		{
+			apiKey: auth.apiKey,
+			headers: auth.headers,
+			signal: input.signal,
+			...(input.reasoning ? { reasoning: input.reasoning } : {}),
+			onPayload: (payload: any) => {
+				const thinkingFields: Record<string, unknown> = {};
+				for (const key of ["reasoning_effort", "thinking", "enable_thinking", "chat_template_kwargs", "reasoning"]) {
+					if (key in payload) thinkingFields[key] = payload[key];
+				}
+				console.log("[commit] reasoning:", input.reasoning ?? "none", "| payload thinking fields:", JSON.stringify(thinkingFields));
+				return undefined;
+			},
+		},
 	);
 
 	if (response.stopReason === "aborted") throw new Error("Commit message generation was cancelled");
@@ -426,6 +442,7 @@ async function generateCommitMessage(input: {
 	ctx: ExtensionCommandContext;
 	model: CommitModel;
 	prompt: string;
+	reasoning?: ThinkingLevel;
 }): Promise<{ commitMessage: string; historySummary?: string }> {
 	if (input.ctx.mode !== "tui") {
 		return callModel(input);
@@ -516,7 +533,12 @@ export default function commitExtension(pi: ExtensionAPI) {
 						conventionalCommit: config.conventionalCommit,
 					});
 
-					const generated = await generateCommitMessage({ ctx, model, prompt });
+					const generated = await generateCommitMessage({
+					ctx,
+					model,
+					prompt,
+					reasoning: config.thinking === false ? undefined : config.thinking,
+				});
 					commitMessage = generated.commitMessage;
 
 					stateFile.sessions[key] = {

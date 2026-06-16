@@ -1,0 +1,36 @@
+{
+  "defaults": {
+    "waitForSeconds": 0,
+    "timeoutMs": 900000,
+    "tools": "default",
+    "extensions": "inherit",
+    "model": "deepseek/deepseek-v4-flash",
+    "cwd": "parent",
+    "projectTrust": "inherit",
+    "sessionNameTemplate": "delegate p:{parent8} #{number} — {slug}"
+  },
+  "nested": {
+    "enabled": false,
+    "maxDepth": 0,
+    "recordBlockedAttempts": true
+  },
+  "agentOverrides": {
+    "allowed": ["label", "waitForSeconds", "timeoutMs", "tools", "extensions", "model", "cwd", "projectTrust"],
+    "maxTimeoutMs": 1800000,
+    "maxWaitForSeconds": 300
+  },
+  "shutdown": {
+    "runningDelegations": "terminate",
+    "killGraceMs": 3000
+  },
+  "ui": {
+    "enabled": true,
+    "status": true,
+    "runningWidget": true,
+    "widgetPlacement": "belowEditor",
+    "pollIntervalMs": 2000,
+    "scope": "current_session",
+    "showCompletedForMs": 10000,
+    "maxWidgetItems": 5
+  }
+}

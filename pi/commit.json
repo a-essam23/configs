@@ -1,5 +1,6 @@
 {
   "model": "deepseek/deepseek-v4-flash",
+  "thinking": false,
   "recentMessages": 12,
   "maxDiffChars": 90000,
   "maxHistoryChars": 24000,
