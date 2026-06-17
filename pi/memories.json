@@ -12,19 +12,5 @@
     "key": "check-memories-before-building",
     "type": "core",
     "timestamp": "2026-06-13T03:33:13.737Z"
-  },
-  {
-    "id": "global:6e082bae-25c0-4aaf-ae1f-5f1d190160c9",
-    "content": "htmx has no built-in/extension to \"reset a form after successful submit\" — it's a known gap (open issue bigskysoftware/htmx#3198). For form-clearing/focus after submit, use hx-on::after-request with the `event.detail.successful` guard (true on 20x), NOT after-settle. after-settle fires from the swap target; if the handler retargets elsewhere (e.g. HX-Retarget: #comment-list on success), after-settle never reaches the form, and on the error path (form self-swaps with preserved Body) it wipes the text the server deliberately preserved.",
-    "key": "htmx-form-clear-after-request",
-    "type": "regular",
-    "timestamp": "2026-06-17T12:25:52.769Z"
-  },
-  {
-    "id": "global:b1bf917c-7e10-44b9-bea0-68dd75991441",
-    "content": "In templ, `@Component()` calls glued to text on the same line are NOT parsed as calls — templ emits them as literal raw text (build still succeeds, so it's a silent runtime bug). Component calls must be a standalone node on their own line. Text + inline HTML elements or `{ expr }` interpolation DO work inline, but text + `@Component()` does not. Symptom: literal `@Foo(...)` string appearing in the browser.",
-    "key": "templ-inline-component-text-bug",
-    "type": "regular",
-    "timestamp": "2026-06-17T12:31:26.977Z"
   }
 ]

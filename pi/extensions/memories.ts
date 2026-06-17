@@ -13,7 +13,7 @@
  *   global -> ~/.pi/agent/memories.json
  *   local  -> <cwd>/.pi/memories.json
  *
- * Tools:     save_memory, list_memories, read_memories, recall_memories, delete_memory, update_memory
+ * Tools:     save_memory, list_memories, read_memories, delete_memory, update_memory
  * Commands:  /memories (view all), /memory add (quick add)
  * Widget:    Shows live memory counts below the editor
  */
@@ -400,8 +400,6 @@ const ReadParams = Type.Object({
   ),
 });
 
-const RecallParams = ReadParams;
-
 const DeleteParams = Type.Object({
   id: Type.Optional(
     Type.String({
@@ -554,6 +552,43 @@ class MemoriesList {
     this.message = `Changed ${memoryKey(target)} to ${target.type}`;
   }
 
+  private switchSelectedScope(): void {
+    const memory = this.selectedMemory();
+    if (!memory) return;
+
+    const parsed = parseId(memory.id);
+    if (!parsed) {
+      this.message = `Invalid memory id: ${memory.id}`;
+      return;
+    }
+
+    const fromList = parsed.scope === "global" ? globalMemories : localMemories;
+    const toScope: MemoryScope = parsed.scope === "global" ? "local" : "global";
+    const toList = toScope === "global" ? globalMemories : localMemories;
+    const fromFile = parsed.scope === "global" ? GLOBAL_FILE : localFile(this.cwd);
+    const toFile = toScope === "global" ? GLOBAL_FILE : localFile(this.cwd);
+    const idx = fromList.findIndex((m) => m.id === memory.id);
+    if (idx === -1) {
+      this.message = `Memory not found: ${memoryKey(memory)}`;
+      this.reload();
+      return;
+    }
+
+    const [removed] = fromList.splice(idx, 1);
+    const moved: Memory = { ...removed!, id: makeId(toScope) };
+    toList.push(moved);
+    saveMemories(fromFile, fromList);
+    saveMemories(toFile, toList);
+
+    if (this.expanded.delete(memory.id)) this.expanded.add(moved.id);
+    this.pendingDeleteId = undefined;
+    this.reload();
+    const newIndex = this.memories.findIndex((m) => m.id === moved.id);
+    if (newIndex !== -1) this.selected = newIndex;
+    refreshStatus();
+    this.message = `Moved ${memoryKey(moved)} to ${toScope === "global" ? "global" : "project"}`;
+  }
+
   handleInput(data: string): void {
     if (this.pendingDeleteId) {
       if (matchesKey(data, "y") || data === "Y") {
@@ -621,6 +656,12 @@ class MemoriesList {
       return;
     }
 
+    if (matchesKey(data, "s")) {
+      this.switchSelectedScope();
+      this.requestRender();
+      return;
+    }
+
     if (matchesKey(data, "r")) {
       this.reload();
       this.message = "Reloaded memories";
@@ -641,7 +682,7 @@ class MemoriesList {
     lines.push(truncateToWidth(header, width));
     lines.push(
       truncateToWidth(
-        `  ${th.fg("dim", "↑/↓/j/k select · Enter expand · t core/regular · d delete · r reload · q close")}`,
+        `  ${th.fg("dim", "↑/↓/j/k select · Enter expand · t core/regular · s local/global · d delete · r reload · q close")}`,
         width,
       ),
     );
@@ -932,6 +973,20 @@ export default function (pi: ExtensionAPI) {
     return new Text(theme.fg("success", "✓ ") + theme.fg("muted", `${count}${suffix} ${noun}`), 0, 0);
   }
 
+  function renderMemoryReadResult(result: { details?: unknown }, theme: Theme) {
+    const details = result.details as {
+      count?: number;
+      total?: number;
+      results?: Array<{ id?: string; key?: string }>;
+    } | undefined;
+    const count = details?.count ?? 0;
+    const total = details?.total;
+    const suffix = total !== undefined && total !== count ? ` of ${total}` : "";
+    const names = (details?.results ?? []).map((memory) => memory.key || memory.id || "(unnamed)");
+    const namesSuffix = names.length > 0 ? `: ${names.join(", ")}` : "";
+    return new Text(theme.fg("success", "✓ ") + theme.fg("muted", `${count}${suffix} memories read${namesSuffix}`), 0, 0);
+  }
+
   // ── Tool: list_memories ────────────────────────────────────────────────
 
   pi.registerTool({
@@ -981,32 +1036,7 @@ export default function (pi: ExtensionAPI) {
     },
 
     renderResult(result, _options, theme, _context) {
-      return renderMemoryCount(result, theme, "memories read");
-    },
-  });
-
-  // ── Tool: recall_memories (backward-compatible alias) ──────────────────
-
-  pi.registerTool({
-    name: "recall_memories",
-    label: "Recall Memories",
-    description: "Backward-compatible alias for read_memories. Prefer list_memories/read_memories in new usage.",
-    promptSnippet: "Legacy alias for reading saved memories",
-    promptGuidelines: [
-      "Prefer list_memories for discovery and read_memories for full content. recall_memories is a legacy alias.",
-    ],
-    parameters: RecallParams,
-
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      return executeReadMemories(params, ctx);
-    },
-
-    renderCall(args, theme, _context) {
-      return renderMemorySearchCall("recall_memories", args, theme);
-    },
-
-    renderResult(result, _options, theme, _context) {
-      return renderMemoryCount(result, theme, "memories read");
+      return renderMemoryReadResult(result, theme);
     },
   });
 
