@@ -1,12 +1,12 @@
 {
   "lastChangelogVersion": "0.79.6",
-  "defaultProvider": "deepseek",
-  "defaultModel": "deepseek-v4-pro",
+  "defaultProvider": "opencode-go",
+  "defaultModel": "kimi-k2.7-code",
   "defaultThinkingLevel": "high",
   "hideThinkingBlock": false,
   "packages": [
     "git:github.com/a-essam23/pi-codex-usage@606e4dd",
-    "npm:pi-web-access@0.10.7",
+    "npm:pi-web-access@0.10.7"
   ],
   "theme": "dark"
 }
