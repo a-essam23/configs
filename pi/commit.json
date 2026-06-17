@@ -5,7 +5,7 @@
   "maxDiffChars": 90000,
   "maxHistoryChars": 24000,
   "maxSummaryChars": 12000,
-  "editMessage": true,
-  "confirm": false,
+  "editMessage": false,
+  "confirm": true,
   "conventionalCommit": true
 }

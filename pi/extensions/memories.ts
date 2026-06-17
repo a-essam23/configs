@@ -20,7 +20,7 @@
 
 import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
-import { matchesKey, Text, truncateToWidth, type Theme } from "@earendil-works/pi-tui";
+import { Key, matchesKey, Text, truncateToWidth, wrapTextWithAnsi, type Theme } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -268,18 +268,16 @@ function refreshStatus(): void {
 
 function buildMemoriesSection(): string {
   const all = allMemories();
-  if (all.length === 0) return "";
-
   const cores = all.filter((m) => m.type === "core");
   const lines: string[] = [];
   lines.push("## Memories");
 
   // Core memories in full
-  for (const m of cores) {
-    lines.push(`- ${m.content}`);
-  }
-
-  if (cores.length > 0 && all.length > cores.length) {
+  if (cores.length > 0) {
+    lines.push("Core memories:");
+    for (const m of cores) {
+      lines.push(`- ${m.content}`);
+    }
     lines.push("");
   }
 
@@ -287,8 +285,17 @@ function buildMemoriesSection(): string {
   const keys = [...new Set(all.map((m) => m.key).filter(Boolean))];
   if (keys.length > 0) {
     lines.push(`Saved memory keys: ${keys.join(", ")}`);
+    lines.push("");
   }
-  lines.push("Use list_memories to inspect available memories. Use read_memories with exact keys/ids/slugs for full content. Check before saving to avoid duplicates.");
+
+  lines.push("Memory policy:");
+  lines.push("- Consider saving a memory when the user states a durable preference, corrects your behavior, establishes a project convention, or you discover a non-obvious pitfall that would prevent future mistakes.");
+  lines.push("- Save only if the memory would change future assistant behavior and is not obvious from code, docs, git history, or the current task.");
+  lines.push("- When the save criteria are met, call save_memory before the final answer.");
+  lines.push("- Do not save task progress, implementation summaries, build logs, architecture descriptions, or one-off facts.");
+  lines.push("- If a similar memory may already exist, use list_memories/read_memories before saving.");
+  lines.push("- If unsure whether something is durable, reusable, and invisible from code, do not save it.");
+  lines.push("Use list_memories to inspect available memories. Use read_memories with exact keys/ids/slugs for full content.");
 
   return lines.join("\n");
 }
@@ -442,17 +449,182 @@ const UpdateParams = Type.Object({
 class MemoriesList {
   private memories: Memory[];
   private theme: Theme;
+  private cwd: string;
+  private requestRender: () => void;
   private onClose: () => void;
+  private selected = 0;
+  private expanded = new Set<string>();
+  private pendingDeleteId: string | undefined;
+  private message: string | undefined;
 
-  constructor(memories: Memory[], theme: Theme, onClose: () => void) {
-    this.memories = memories;
-    this.theme = theme;
-    this.onClose = onClose;
+  constructor(options: {
+    memories: Memory[];
+    theme: Theme;
+    cwd: string;
+    requestRender: () => void;
+    onClose: () => void;
+  }) {
+    this.memories = this.orderMemories(options.memories);
+    this.theme = options.theme;
+    this.cwd = options.cwd;
+    this.requestRender = options.requestRender;
+    this.onClose = options.onClose;
+  }
+
+  invalidate(): void {}
+
+  private orderMemories(memories: Memory[]): Memory[] {
+    const rank = (m: Memory) => {
+      const scopeRank = m.id.startsWith("global:") ? 0 : 2;
+      const typeRank = m.type === "core" ? 0 : 1;
+      return scopeRank + typeRank;
+    };
+    return [...memories].sort((a, b) => {
+      const byRank = rank(a) - rank(b);
+      if (byRank !== 0) return byRank;
+      return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
+    });
+  }
+
+  private reload(): void {
+    reloadAll(this.cwd);
+    this.memories = this.orderMemories(allMemories());
+    if (this.selected >= this.memories.length) {
+      this.selected = Math.max(0, this.memories.length - 1);
+    }
+  }
+
+  private selectedMemory(): Memory | undefined {
+    return this.memories[this.selected];
+  }
+
+  private deleteSelected(): void {
+    const memory = this.selectedMemory();
+    if (!memory) return;
+
+    const parsed = parseId(memory.id);
+    if (!parsed) {
+      this.message = `Invalid memory id: ${memory.id}`;
+      return;
+    }
+
+    const list = parsed.scope === "global" ? globalMemories : localMemories;
+    const filePath = parsed.scope === "global" ? GLOBAL_FILE : localFile(this.cwd);
+    const idx = list.findIndex((m) => m.id === memory.id);
+    if (idx === -1) {
+      this.message = `Memory not found: ${memoryKey(memory)}`;
+      this.reload();
+      return;
+    }
+
+    const removed = list.splice(idx, 1)[0]!;
+    saveMemories(filePath, list);
+    this.expanded.delete(removed.id);
+    this.pendingDeleteId = undefined;
+    this.reload();
+    refreshStatus();
+    this.message = `Deleted ${memoryKey(removed)}`;
+  }
+
+  private toggleSelectedType(): void {
+    const memory = this.selectedMemory();
+    if (!memory) return;
+
+    const parsed = parseId(memory.id);
+    if (!parsed) {
+      this.message = `Invalid memory id: ${memory.id}`;
+      return;
+    }
+
+    const list = parsed.scope === "global" ? globalMemories : localMemories;
+    const filePath = parsed.scope === "global" ? GLOBAL_FILE : localFile(this.cwd);
+    const target = list.find((m) => m.id === memory.id);
+    if (!target) {
+      this.message = `Memory not found: ${memoryKey(memory)}`;
+      this.reload();
+      return;
+    }
+
+    target.type = target.type === "core" ? "regular" : "core";
+    saveMemories(filePath, list);
+    this.reload();
+    const newIndex = this.memories.findIndex((m) => m.id === target.id);
+    if (newIndex !== -1) this.selected = newIndex;
+    refreshStatus();
+    this.message = `Changed ${memoryKey(target)} to ${target.type}`;
   }
 
   handleInput(data: string): void {
-    if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
+    if (this.pendingDeleteId) {
+      if (matchesKey(data, "y") || data === "Y") {
+        this.deleteSelected();
+        this.requestRender();
+        return;
+      }
+      if (
+        matchesKey(data, "n") ||
+        data === "N" ||
+        matchesKey(data, Key.escape) ||
+        matchesKey(data, Key.ctrl("c"))
+      ) {
+        this.pendingDeleteId = undefined;
+        this.message = "Delete cancelled";
+        this.requestRender();
+        return;
+      }
+      return;
+    }
+
+    if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c")) || matchesKey(data, "q")) {
       this.onClose();
+      return;
+    }
+
+    if (matchesKey(data, Key.up) || matchesKey(data, "k")) {
+      this.selected = Math.max(0, this.selected - 1);
+      this.message = undefined;
+      this.requestRender();
+      return;
+    }
+
+    if (matchesKey(data, Key.down) || matchesKey(data, "j")) {
+      this.selected = Math.min(Math.max(0, this.memories.length - 1), this.selected + 1);
+      this.message = undefined;
+      this.requestRender();
+      return;
+    }
+
+    if (matchesKey(data, Key.enter) || matchesKey(data, Key.space)) {
+      const memory = this.selectedMemory();
+      if (memory) {
+        if (this.expanded.has(memory.id)) this.expanded.delete(memory.id);
+        else this.expanded.add(memory.id);
+        this.message = undefined;
+        this.requestRender();
+      }
+      return;
+    }
+
+    if (matchesKey(data, "d")) {
+      const memory = this.selectedMemory();
+      if (memory) {
+        this.pendingDeleteId = memory.id;
+        this.message = undefined;
+        this.requestRender();
+      }
+      return;
+    }
+
+    if (matchesKey(data, "t")) {
+      this.toggleSelectedType();
+      this.requestRender();
+      return;
+    }
+
+    if (matchesKey(data, "r")) {
+      this.reload();
+      this.message = "Reloaded memories";
+      this.requestRender();
     }
   }
 
@@ -467,6 +639,12 @@ class MemoriesList {
       title +
       th.fg("borderMuted", "─".repeat(Math.max(0, width - 13)));
     lines.push(truncateToWidth(header, width));
+    lines.push(
+      truncateToWidth(
+        `  ${th.fg("dim", "↑/↓/j/k select · Enter expand · t core/regular · d delete · r reload · q close")}`,
+        width,
+      ),
+    );
     lines.push("");
 
     if (this.memories.length === 0) {
@@ -478,71 +656,102 @@ class MemoriesList {
       );
     }
 
-    // Group by scope, then type
-    const globalCores = this.memories.filter(
-      (m) => m.id.startsWith("global:") && m.type === "core",
-    );
-    const globalRegular = this.memories.filter(
-      (m) => m.id.startsWith("global:") && m.type === "regular",
-    );
-    const localCores = this.memories.filter(
-      (m) => m.id.startsWith("local:") && m.type === "core",
-    );
-    const localRegular = this.memories.filter(
-      (m) => m.id.startsWith("local:") && m.type === "regular",
-    );
-
-    const groups: Array<{
-      label: string;
-      color: (s: string) => string;
-      items: Memory[];
-    }> = [
-      {
-        label: "Global · Core",
-        color: (s) => th.fg("accent", th.bold(s)),
-        items: globalCores,
-      },
-      {
-        label: "Global · Regular",
-        color: (s) => th.fg("muted", s),
-        items: globalRegular,
-      },
-      {
-        label: "Project · Core",
-        color: (s) => th.fg("accent", th.bold(s)),
-        items: localCores,
-      },
-      {
-        label: "Project · Regular",
-        color: (s) => th.fg("muted", s),
-        items: localRegular,
-      },
-    ];
-
-    for (const group of groups) {
-      if (group.items.length === 0) continue;
-      lines.push(truncateToWidth(`  ${group.color(group.label)}`, width));
-      for (const m of group.items) {
-        const id = th.fg("dim", m.id.split(":")[1]!.slice(0, 8));
-        const keyStr = m.key ? ` ${th.fg("dim", `[${m.key}]`)}` : "";
-        lines.push(
-          truncateToWidth(
-            `    ${th.fg("dim", id)}  ${m.content}${keyStr}`,
-            width,
-          ),
-        );
+    let previousGroup = "";
+    for (const [index, memory] of this.memories.entries()) {
+      const scope = scopeOf(memory);
+      const group = `${scope === "global" ? "Global" : "Project"} · ${memory.type === "core" ? "Core" : "Regular"}`;
+      if (group !== previousGroup) {
+        if (previousGroup) lines.push("");
+        const color = memory.type === "core" ? (s: string) => th.fg("accent", th.bold(s)) : (s: string) => th.fg("muted", s);
+        lines.push(truncateToWidth(`  ${color(group)}`, width));
+        previousGroup = group;
       }
-      lines.push("");
+
+      const selected = index === this.selected;
+      const marker = selected ? th.fg("accent", ">") : " ";
+      const key = memory.key ?? memory.id.split(":")[1]!.slice(0, 8);
+      const badges = th.fg("dim", `[${scope} ${memory.type}]`);
+      const label = `${marker} ${badges} ${th.bold(key)}`;
+      const expanded = this.expanded.has(memory.id);
+
+      if (expanded) {
+        lines.push(truncateToWidth(`  ${label}`, width));
+        lines.push(truncateToWidth(`      ${th.fg("dim", `id: ${memory.id}`)}`, width));
+        lines.push(truncateToWidth(`      ${th.fg("dim", `saved: ${memory.timestamp}`)}`, width));
+        for (const line of wrapTextWithAnsi(memory.content, Math.max(10, width - 6))) {
+          lines.push(truncateToWidth(`      ${line}`, width));
+        }
+      } else {
+        const previewWidth = Math.max(10, width - 8);
+        const preview = truncateToWidth(memory.content, previewWidth);
+        lines.push(truncateToWidth(`  ${label}  ${preview}`, width));
+      }
     }
 
+    lines.push("");
+    if (this.pendingDeleteId) {
+      const memory = this.selectedMemory();
+      const name = memory ? memoryKey(memory) : this.pendingDeleteId;
+      lines.push(truncateToWidth(`  ${th.fg("error", `Delete ${name}?`)} ${th.fg("dim", "y/N")}`, width));
+    } else if (this.message) {
+      lines.push(truncateToWidth(`  ${th.fg("muted", this.message)}`, width));
+    }
     lines.push(
       truncateToWidth(
-        `  ${th.fg("dim", `Total: ${this.memories.length} · Press Escape to close`)}`,
+        `  ${th.fg("dim", `Total: ${this.memories.length}`)}`,
         width,
       ),
     );
     lines.push("");
 
+    return lines;
+  }
+}
+
+class MemoriesPreview {
+  private section: string;
+  private theme: Theme;
+  private onClose: () => void;
+
+  constructor(section: string, theme: Theme, onClose: () => void) {
+    this.section = section;
+    this.theme = theme;
+    this.onClose = onClose;
+  }
+
+  invalidate(): void {}
+
+  handleInput(data: string): void {
+    if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c")) || matchesKey(data, "q")) {
+      this.onClose();
+    }
+  }
+
+  render(width: number): string[] {
+    const th = this.theme;
+    const lines: string[] = [];
+
+    lines.push("");
+    const title = th.fg("accent", " Memories Prompt Preview ");
+    const header =
+      th.fg("borderMuted", "─".repeat(3)) +
+      title +
+      th.fg("borderMuted", "─".repeat(Math.max(0, width - 27)));
+    lines.push(truncateToWidth(header, width));
+    lines.push(truncateToWidth(`  ${th.fg("dim", "This is appended to the system prompt by the memories extension. · q close")}`, width));
+    lines.push("");
+
+    for (const rawLine of this.section.split("\n")) {
+      if (rawLine.length === 0) {
+        lines.push("");
+        continue;
+      }
+      for (const line of wrapTextWithAnsi(rawLine, Math.max(10, width - 4))) {
+        lines.push(truncateToWidth(`  ${line}`, width));
+      }
+    }
+
+    lines.push("");
     return lines;
   }
 }
@@ -589,17 +798,22 @@ export default function (pi: ExtensionAPI) {
     name: "save_memory",
     label: "Save Memory",
     description:
-      "Save a concise note about the user — preferences, facts, conventions, " +
-      "or decisions. Use proactively without asking the user.",
-    promptSnippet: "Save a user preference, fact, or project convention",
+      "Save a high-confidence durable memory about the user — preferences, facts, " +
+      "conventions, decisions, or hard-won lessons. Use without asking only when it meets the memory policy.",
+    promptSnippet: "Save a durable preference, convention, correction, or hard-won lesson",
     promptGuidelines: [
-      "Proactively save important user preferences, facts, and decisions using save_memory without waiting for the user to ask.",
+      "Consider save_memory when the user states a durable preference, corrects your behavior, establishes a project convention, or you discover a non-obvious pitfall that would prevent future mistakes.",
+      "Save only if the memory would change future assistant behavior and is not obvious from code, docs, git history, or the current task.",
+      "When the save criteria are met, call save_memory before the final answer.",
+      "Do not save task progress, implementation summaries, build logs, architecture descriptions, or one-off facts.",
       "Memories must be extremely concise — one short sentence at most.",
-      'Use type "core" only for preferences that affect nearly every interaction (e.g. language choice, accessibility needs, key tool preferences).',
-      'Use type "regular" for project-specific context, past decisions, or situational preferences.',
+      'Use type "core" rarely, only for preferences that affect nearly every interaction (e.g. language choice, accessibility needs, key tool preferences).',
+      'Use type "regular" for project-specific context, past decisions, situational preferences, and hard-won gotchas.',
       'Use scope "global" for user-wide facts and "local" for project-specific facts.',
-      "Only save what is invisible from reading the code — insights, pitfalls, conventions, preferences, and hard-won debugging lessons. Never save architecture descriptions or build-log entries (e.g. 'Moved sidebar to layout level' or 'Added X endpoint'). The code already documents itself.",
+      "Good memories: durable preferences, project conventions, user corrections, design intent not visible from code, or hard-won debugging lessons.",
+      "Bad memories: 'Added X endpoint', 'Moved sidebar rendering', 'Implemented Redis sessions', or 'Current task is to fix login'.",
       "Use list_memories or read_memories to check for existing similar memories before saving new ones. Do not create duplicates.",
+      "If unsure whether something is durable, reusable, and invisible from code, do not save it.",
     ],
     parameters: SaveParams,
 
@@ -1043,12 +1257,26 @@ export default function (pi: ExtensionAPI) {
   // ── Command: /memories ─────────────────────────────────────────────────
 
   pi.registerCommand("memories", {
-    description: "View all saved memories",
-    handler: async (_args, ctx) => {
+    description: "Browse, expand, delete, and preview saved memories",
+    handler: async (args, ctx) => {
       reloadAll(ctx.cwd);
       const memories = allMemories();
+      const mode = args.trim();
 
       if (!ctx.hasUI) return;
+
+      if (mode === "preview") {
+        const section = buildMemoriesSection();
+        if (ctx.mode !== "tui") {
+          ctx.ui.notify(section, "info");
+          return;
+        }
+
+        await ctx.ui.custom<void>((_tui, theme, _kb, done) => {
+          return new MemoriesPreview(section, theme, () => done());
+        });
+        return;
+      }
 
       if (ctx.mode !== "tui") {
         // RPC mode: show text summary
@@ -1065,8 +1293,14 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      await ctx.ui.custom<void>((_tui, theme, _kb, done) => {
-        return new MemoriesList(memories, theme, () => done());
+      await ctx.ui.custom<void>((tui, theme, _kb, done) => {
+        return new MemoriesList({
+          memories,
+          theme,
+          cwd: ctx.cwd,
+          requestRender: () => tui.requestRender(),
+          onClose: () => done(),
+        });
       });
     },
   });

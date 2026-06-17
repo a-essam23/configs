@@ -1,1 +1,9 @@
-[]
+[
+  {
+    "id": "local:e4e83bec-b2a5-4287-b2e8-aa7a2a6cd100",
+    "content": "The memories extension should remain model-agnostic; do not add model-specific configuration or behavior paths.",
+    "key": "memories-model-agnostic",
+    "type": "regular",
+    "timestamp": "2026-06-16T19:14:04.872Z"
+  }
+]
