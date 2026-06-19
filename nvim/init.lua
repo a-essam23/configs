@@ -5,4 +5,5 @@ vim.opt.termguicolors = true
 vim.o.wildmenu = true
 vim.o.wildmode = "longest:full,full"
 vim.o.wildoptions = "pum"
+vim.opt.wrap = false
 
