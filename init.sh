@@ -69,6 +69,9 @@ section_info() {
 		nvim)        echo "nvim|${HOME}/.config/nvim" ;;
 		opencode)    echo "opencode|${HOME}/.config/opencode" ;;
 		pi-ext)      echo "pi/extensions|${HOME}/.pi/agent/extensions" ;;
+		pi-skills)   echo "pi/skills|${HOME}/.pi/agent/skills" ;;
+		pi-prompts)  echo "pi/prompts|${HOME}/.pi/agent/prompts" ;;
+		pi-agents)   echo "pi/agents|${HOME}/.pi/agent/agents" ;;
 		pi-settings) echo "pi/settings.json|${HOME}/.pi/agent/settings.json" ;;
 		*)        echo "" ;;
 	esac
@@ -249,7 +252,7 @@ collect_risks() {
 show_status() {
 	printf "\n%-10s %-12s %s\n" "SECTION" "STATE" "DETAILS"
 	printf "%s\n" "────────────────────────────────────────────────"
-	for section in nvim opencode pi-ext pi-settings; do
+	for section in nvim opencode pi-ext pi-skills pi-prompts pi-agents pi-settings; do
 		local info src dst state
 		info="$(section_info "$section")"
 		src="${info%%|*}"
@@ -339,7 +342,7 @@ do_restore() {
 		exit 1
 	fi
 	if [[ ${#sections[@]} -eq 0 ]]; then
-		sections=(nvim opencode pi-ext pi-settings)
+		sections=(nvim opencode pi-ext pi-skills pi-prompts pi-agents pi-settings)
 	fi
 
 	for section in "${sections[@]}"; do
@@ -426,6 +429,9 @@ Sections:
   nvim        ~/.config/nvim
   opencode    ~/.config/opencode
   pi-ext       ~/.pi/agent/extensions
+  pi-skills    ~/.pi/agent/skills
+  pi-prompts   ~/.pi/agent/prompts
+  pi-agents    ~/.pi/agent/agents
   pi-settings  ~/.pi/agent/settings.json
   all         All of the above
 
@@ -495,12 +501,12 @@ parse_args() {
 				ACTION="help"
 				shift
 				;;
-				nvim|opencode|pi-ext|pi-settings)
+				nvim|opencode|pi-ext|pi-skills|pi-prompts|pi-agents|pi-settings)
 				SELECTED+=("$1")
 				shift
 				;;
 			all)
-				SELECTED=(nvim opencode pi-ext pi-settings)
+				SELECTED=(nvim opencode pi-ext pi-skills pi-prompts pi-agents pi-settings)
 				shift
 				;;
 			*)
@@ -531,14 +537,14 @@ main() {
 			;;
 		restore)
 			if [[ ${#SELECTED[@]} -eq 0 ]]; then
-				SELECTED=(nvim opencode pi-ext pi-settings)
+				SELECTED=(nvim opencode pi-ext pi-skills pi-prompts pi-agents pi-settings)
 			fi
 			do_restore "$RESTORE_TS" "${SELECTED[@]}"
 			exit 0
 			;;
 		unlink)
 			if [[ ${#SELECTED[@]} -eq 0 ]]; then
-				SELECTED=(nvim opencode pi-ext pi-settings)
+				SELECTED=(nvim opencode pi-ext pi-skills pi-prompts pi-agents pi-settings)
 			fi
 			for section in "${SELECTED[@]}"; do
 				do_unlink "$section"
