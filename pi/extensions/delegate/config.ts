@@ -110,7 +110,7 @@ const DEFAULT_CONFIG: DelegateConfig = {
 };
 
 type DeepPartial<T> = {
-	[K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K];
+	[K in keyof T]?: T[K] extends unknown[] ? T[K] : T[K] extends object ? DeepPartial<T[K]> : T[K];
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -142,7 +142,7 @@ async function readJsonIfExists<T>(path: string): Promise<T | undefined> {
 }
 
 function extensionConfigPath(): string | undefined {
-	return typeof __dirname === "string" ? join(__dirname, "..", "..", "delegate.json") : undefined;
+	return typeof __dirname === "string" ? join(__dirname, "..", "..", "configs", "delegate.json") : undefined;
 }
 
 function numberInRange(value: unknown, fallback: number, min: number, max: number): number {
@@ -270,11 +270,11 @@ export async function loadDelegateConfig(ctx: ExtensionContext): Promise<Delegat
 		if (extensionConfig) config = mergeConfig(config, extensionConfig);
 	}
 
-	const globalPath = join(getAgentDir(), "delegate.json");
+	const globalPath = join(getAgentDir(), "configs", "delegate.json");
 	const globalConfig = await readJsonIfExists<DeepPartial<DelegateConfig>>(globalPath);
 	if (globalConfig) config = mergeConfig(config, globalConfig);
 
-	const projectPath = join(ctx.cwd, ".pi", "delegate.json");
+	const projectPath = join(ctx.cwd, ".pi", "configs", "delegate.json");
 	if (ctx.isProjectTrusted() && existsSync(projectPath)) {
 		const projectConfig = await readJsonIfExists<DeepPartial<DelegateConfig>>(projectPath);
 		if (projectConfig) config = mergeConfig(config, projectConfig);

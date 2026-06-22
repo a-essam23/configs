@@ -102,8 +102,8 @@ function getExtensionDir(): string | undefined {
 function configPaths(): string[] {
 	const paths: string[] = [];
 	const extensionDir = getExtensionDir();
-	if (extensionDir) paths.push(join(extensionDir, "..", "commit.json"));
-	paths.push(join(getAgentDir(), "commit.json"));
+	if (extensionDir) paths.push(join(extensionDir, "..", "configs", "commit.json"));
+	paths.push(join(getAgentDir(), "configs", "commit.json"));
 	return [...new Set(paths)];
 }
 

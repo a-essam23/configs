@@ -69,6 +69,7 @@ section_info() {
 		nvim)        echo "nvim|${HOME}/.config/nvim" ;;
 		opencode)    echo "opencode|${HOME}/.config/opencode" ;;
 		pi-ext)      echo "pi/extensions|${HOME}/.pi/agent/extensions" ;;
+		pi-configs)  echo "pi/configs|${HOME}/.pi/agent/configs" ;;
 		pi-skills)   echo "pi/skills|${HOME}/.pi/agent/skills" ;;
 		pi-prompts)  echo "pi/prompts|${HOME}/.pi/agent/prompts" ;;
 		pi-agents)   echo "pi/agents|${HOME}/.pi/agent/agents" ;;
@@ -131,6 +132,23 @@ find_latest_backup_manifest() {
 	echo "$latest"
 }
 
+cleanup_legacy_pi_config_links() {
+	local fname dst
+	for fname in commit.json delegate.json handoff.json memories.json; do
+		dst="${HOME}/.pi/agent/${fname}"
+		if [[ -L "$dst" ]]; then
+			if "$DRY_RUN"; then
+				dry "would rm -f $dst"
+			else
+				rm -f "$dst"
+			fi
+			ok "[pi-configs] removed legacy ${fname} symlink"
+		elif [[ -e "$dst" ]]; then
+			warn "[pi-configs] legacy real file remains: $dst"
+		fi
+	done
+}
+
 # ─── Core linking logic ─────────────────────────────────────
 link_dir() {
 	local section="$1"
@@ -146,35 +164,14 @@ link_dir() {
 
 	info "[$section] $src → $dst"
 
-	# pi-ext also symlinks all pi/*.json to ~/.pi/agent/ (do this first)
-	if [[ "$section" == "pi-ext" ]]; then
-		local mem_parent="${HOME}/.pi/agent"
-		if [[ ! -d "$mem_parent" ]]; then
-			if "$DRY_RUN"; then
-				dry "would mkdir -p $mem_parent"
-			else
-				mkdir -p "$mem_parent"
-			fi
-		fi
-		for json_file in "$REPO_ROOT"/pi/*.json; do
-			[[ -f "$json_file" ]] || continue
-			local fname
-			fname="$(basename "$json_file")"
-			local mem_dst="${HOME}/.pi/agent/${fname}"
-			if "$DRY_RUN"; then
-				dry "would ln -sfn $json_file $mem_dst"
-			else
-				ln -sfn "$json_file" "$mem_dst"
-			fi
-			ok "[pi-ext] ${fname} linked"
-		done
-	fi
-
 	local state
 	state="$(check_state "$src" "$dst")"
 
 	if [[ "$state" == "linked" ]]; then
 		ok "[$section] already linked, skipping"
+		if [[ "$section" == "pi-configs" ]]; then
+			cleanup_legacy_pi_config_links
+		fi
 		return 0
 	fi
 
@@ -224,6 +221,10 @@ link_dir() {
 	fi
 
 	ok "[$section] linked"
+
+	if [[ "$section" == "pi-configs" ]]; then
+		cleanup_legacy_pi_config_links
+	fi
 }
 
 # ─── Risk scanning ──────────────────────────────────────────
@@ -252,7 +253,7 @@ collect_risks() {
 show_status() {
 	printf "\n%-10s %-12s %s\n" "SECTION" "STATE" "DETAILS"
 	printf "%s\n" "────────────────────────────────────────────────"
-	for section in nvim opencode pi-ext pi-skills pi-prompts pi-agents pi-settings; do
+	for section in nvim opencode pi-ext pi-configs pi-skills pi-prompts pi-agents pi-settings; do
 		local info src dst state
 		info="$(section_info "$section")"
 		src="${info%%|*}"
@@ -272,27 +273,6 @@ show_status() {
 			wrong-link)
 				printf "%-10s ${RED}%-12s${NC} → %s\n" "$section" "wrong-link" "$(resolve_link "$dst")"
 				;;
-		esac
-	done
-
-	# Also show all pi/*.json symlinks
-	for json_file in "$REPO_ROOT"/pi/*.json; do
-		[[ -f "$json_file" ]] || continue
-		local fname label
-		fname="$(basename "$json_file")"
-		label="${fname%.json}"
-		local mem_dst="${HOME}/.pi/agent/${fname}"
-		local mem_state
-		mem_state="$(check_state "$json_file" "$mem_dst")"
-		case "$mem_state" in
-			linked)
-				printf "%-10s ${GREEN}%-12s${NC} → %s\n" "$label" "linked" "$json_file" ;;
-			real)
-				printf "%-10s ${YELLOW}%-12s${NC} %s\n" "$label" "real" "$mem_dst" ;;
-			missing)
-				printf "%-10s ${RED}%-12s${NC}\n" "$label" "missing" ;;
-			wrong-link)
-				printf "%-10s ${RED}%-12s${NC} → %s\n" "$label" "wrong-link" "$(resolve_link "$mem_dst")" ;;
 		esac
 	done
 
@@ -342,7 +322,7 @@ do_restore() {
 		exit 1
 	fi
 	if [[ ${#sections[@]} -eq 0 ]]; then
-		sections=(nvim opencode pi-ext pi-skills pi-prompts pi-agents pi-settings)
+		sections=(nvim opencode pi-ext pi-configs pi-skills pi-prompts pi-agents pi-settings)
 	fi
 
 	for section in "${sections[@]}"; do
@@ -429,6 +409,7 @@ Sections:
   nvim        ~/.config/nvim
   opencode    ~/.config/opencode
   pi-ext       ~/.pi/agent/extensions
+  pi-configs   ~/.pi/agent/configs
   pi-skills    ~/.pi/agent/skills
   pi-prompts   ~/.pi/agent/prompts
   pi-agents    ~/.pi/agent/agents
@@ -501,12 +482,12 @@ parse_args() {
 				ACTION="help"
 				shift
 				;;
-				nvim|opencode|pi-ext|pi-skills|pi-prompts|pi-agents|pi-settings)
+				nvim|opencode|pi-ext|pi-configs|pi-skills|pi-prompts|pi-agents|pi-settings)
 				SELECTED+=("$1")
 				shift
 				;;
 			all)
-				SELECTED=(nvim opencode pi-ext pi-skills pi-prompts pi-agents pi-settings)
+				SELECTED=(nvim opencode pi-ext pi-configs pi-skills pi-prompts pi-agents pi-settings)
 				shift
 				;;
 			*)
@@ -537,14 +518,14 @@ main() {
 			;;
 		restore)
 			if [[ ${#SELECTED[@]} -eq 0 ]]; then
-				SELECTED=(nvim opencode pi-ext pi-skills pi-prompts pi-agents pi-settings)
+				SELECTED=(nvim opencode pi-ext pi-configs pi-skills pi-prompts pi-agents pi-settings)
 			fi
 			do_restore "$RESTORE_TS" "${SELECTED[@]}"
 			exit 0
 			;;
 		unlink)
 			if [[ ${#SELECTED[@]} -eq 0 ]]; then
-				SELECTED=(nvim opencode pi-ext pi-skills pi-prompts pi-agents pi-settings)
+				SELECTED=(nvim opencode pi-ext pi-configs pi-skills pi-prompts pi-agents pi-settings)
 			fi
 			for section in "${SELECTED[@]}"; do
 				do_unlink "$section"

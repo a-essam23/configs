@@ -10,7 +10,7 @@
  *   scope: "global" (all projects) | "local" (this project only)
  *
  * Storage:
- *   global -> ~/.pi/agent/memories.json
+ *   global -> ~/.pi/agent/configs/memories.json
  *   local  -> <cwd>/.pi/memories.json
  *
  * Tools:     save_memory, list_memories, read_memories, delete_memory, update_memory
@@ -18,12 +18,11 @@
  * Widget:    Shows live memory counts below the editor
  */
 
-import { type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, type ExtensionAPI, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
-import { Key, matchesKey, Text, truncateToWidth, wrapTextWithAnsi, type Theme } from "@earendil-works/pi-tui";
+import { Key, matchesKey, Text, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -45,7 +44,7 @@ type MemoryScope = "global" | "local";
 // Storage
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const GLOBAL_FILE = path.join(os.homedir(), ".pi", "agent", "memories.json");
+const GLOBAL_FILE = path.join(getAgentDir(), "configs", "memories.json");
 
 function localFile(cwd: string): string {
   return path.join(cwd, ".pi", "memories.json");
@@ -220,10 +219,6 @@ function reloadAll(cwd: string): void {
 
 function allMemories(): Memory[] {
   return [...globalMemories, ...localMemories];
-}
-
-function coreMemories(): Memory[] {
-  return allMemories().filter((m) => m.type === "core");
 }
 
 function stats() {

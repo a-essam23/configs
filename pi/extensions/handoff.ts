@@ -5,17 +5,66 @@
  * for your next task and creates a new session with a generated prompt.
  *
  * Usage:
+ *   /handoff
  *   /handoff now implement this for teams as well
  *   /handoff execute phase one of the plan
  *   /handoff check other places that need this fix
  *
- * The generated prompt appears as a draft in the editor for review/editing.
+ * Omit the goal to continue from the current conversation.
+ *
+ * Config (`configs/handoff.json`, same lookup pattern as `configs/commit.json`):
+ *   {
+ *     "model": "anthropic/claude-sonnet-4-5",
+ *     "thinking": false,
+ *     "mode": "draft"
+ *   }
+ *
+ * Modes:
+ *   draft - create a new session and put the generated prompt in the editor
+ *   auto  - create a new session and immediately submit the generated prompt
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { complete, type Message } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, SessionEntry } from "@earendil-works/pi-coding-agent";
-import { BorderedLoader, convertToLlm, serializeConversation } from "@earendil-works/pi-coding-agent";
+import { completeSimple, type Message, type ThinkingLevel } from "@earendil-works/pi-ai";
+import {
+	BorderedLoader,
+	convertToLlm,
+	getAgentDir,
+	serializeConversation,
+	type ExtensionAPI,
+	type ExtensionCommandContext,
+	type SessionEntry,
+} from "@earendil-works/pi-coding-agent";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
+// ============================================================================
+// TYPES
+// ============================================================================
+
+const HANDOFF_MODES = ["draft", "auto"] as const;
+type HandoffMode = (typeof HANDOFF_MODES)[number];
+
+type HandoffModel = NonNullable<ExtensionCommandContext["model"]>;
+
+interface HandoffConfig {
+	model?: string;
+	thinking?: ThinkingLevel | false;
+	mode: HandoffMode;
+}
+
+// ============================================================================
+// DEFAULTS
+// ============================================================================
+
+const DEFAULT_CONFIG: HandoffConfig = {
+	model: undefined,
+	thinking: false,
+	mode: "draft",
+};
+
+const DEFAULT_GOAL =
+	"Continue from the current conversation in a new focused session. Infer the next sensible task from the latest discussion and preserve all context needed to proceed.";
 
 const SYSTEM_PROMPT = `You are a context transfer assistant. Given a conversation history and the user's goal for a new thread, generate a focused prompt that:
 
@@ -38,6 +87,167 @@ Files involved:
 
 ## Task
 [Clear description of what to do next based on user's goal]`;
+
+// ============================================================================
+// CONFIG & PATHS
+// ============================================================================
+
+function getExtensionDir(): string | undefined {
+	return typeof __dirname === "string" ? __dirname : undefined;
+}
+
+function configPaths(): string[] {
+	const paths: string[] = [];
+	const extensionDir = getExtensionDir();
+	if (extensionDir) paths.push(join(extensionDir, "..", "configs", "handoff.json"));
+	paths.push(join(getAgentDir(), "configs", "handoff.json"));
+	return [...new Set(paths)];
+}
+
+async function readJsonIfExists<T>(path: string): Promise<T | undefined> {
+	try {
+		return JSON.parse(await readFile(path, "utf8")) as T;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		throw new Error(`Failed to read ${path}: ${(error as Error).message}`);
+	}
+}
+
+function isHandoffMode(value: unknown): value is HandoffMode {
+	return HANDOFF_MODES.includes(value as HandoffMode);
+}
+
+function isThinkingLevel(value: unknown): value is ThinkingLevel {
+	return value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh";
+}
+
+async function loadConfig(): Promise<HandoffConfig> {
+	let config: HandoffConfig = { ...DEFAULT_CONFIG };
+	for (const path of configPaths()) {
+		const partial = await readJsonIfExists<Partial<HandoffConfig>>(path);
+		if (partial) config = { ...config, ...partial };
+	}
+
+	return {
+		...config,
+		mode: isHandoffMode(config.mode) ? config.mode : DEFAULT_CONFIG.mode,
+		thinking: config.thinking === false || isThinkingLevel(config.thinking) ? config.thinking : DEFAULT_CONFIG.thinking,
+	};
+}
+
+// ============================================================================
+// MODEL HELPERS
+// ============================================================================
+
+function resolveConfiguredModel(ctx: ExtensionCommandContext, modelRef: string | undefined): HandoffModel | undefined {
+	const ref = modelRef?.trim();
+	if (!ref) return ctx.model;
+
+	const allModels = ctx.modelRegistry.getAll();
+	if (ref.includes("/")) {
+		const [provider, ...rest] = ref.split("/");
+		const modelId = rest.join("/");
+		return (
+			ctx.modelRegistry.find(provider, modelId) ??
+			allModels.find(
+				(model) =>
+					model.provider === provider &&
+					(model.id === modelId || model.name === modelId || model.id.includes(modelId) || model.name.includes(modelId)),
+			)
+		);
+	}
+
+	const exact = allModels.filter((model) => model.id === ref || model.name === ref);
+	if (exact.length === 1) return exact[0];
+
+	const partial = allModels.filter((model) => model.id.includes(ref) || model.name.includes(ref));
+	if (partial.length === 1) return partial[0];
+
+	return undefined;
+}
+
+function responseText(response: Awaited<ReturnType<typeof completeSimple>>): string {
+	return response.content
+		.filter((content): content is { type: "text"; text: string } => content.type === "text")
+		.map((content) => content.text)
+		.join("\n")
+		.trim();
+}
+
+async function generateHandoffPrompt(input: {
+	ctx: ExtensionCommandContext;
+	model: HandoffModel;
+	conversationText: string;
+	goal: string;
+	signal?: AbortSignal;
+	reasoning?: ThinkingLevel;
+}): Promise<string | null> {
+	const auth = await input.ctx.modelRegistry.getApiKeyAndHeaders(input.model);
+	if (!auth.ok || !auth.apiKey) {
+		throw new Error(auth.ok ? `No API key for ${input.model.provider}` : auth.error);
+	}
+
+	const userMessage: Message = {
+		role: "user",
+		content: [
+			{
+				type: "text",
+				text: `## Conversation History\n\n${input.conversationText}\n\n## User's Goal for New Thread\n\n${input.goal}`,
+			},
+		],
+		timestamp: Date.now(),
+	};
+
+	const response = await completeSimple(
+		input.model,
+		{ systemPrompt: SYSTEM_PROMPT, messages: [userMessage] },
+		{
+			apiKey: auth.apiKey,
+			headers: auth.headers,
+			signal: input.signal,
+			...(input.reasoning ? { reasoning: input.reasoning } : {}),
+		},
+	);
+
+	if (response.stopReason === "aborted") return null;
+	if (response.stopReason === "error") throw new Error(response.errorMessage ?? "Handoff generation failed");
+
+	const prompt = responseText(response);
+	if (!prompt) throw new Error("Model returned an empty handoff prompt");
+	return prompt;
+}
+
+async function generateWithLoader<T>(
+	ctx: ExtensionCommandContext,
+	label: string,
+	fn: (signal: AbortSignal) => Promise<T | null>,
+): Promise<T | null> {
+	const result = await ctx.ui.custom<
+		| { ok: true; value: T }
+		| { ok: false; error: string }
+		| null
+	>((tui, theme, _keybindings, done) => {
+		const loader = new BorderedLoader(tui, theme, `${label}...`);
+		loader.onAbort = () => done(null);
+
+		fn(loader.signal)
+			.then((value) => done(value === null ? null : { ok: true, value }))
+			.catch((error) => {
+				console.error(`${label} failed:`, error);
+				done({ ok: false, error: (error as Error).message });
+			});
+
+		return loader;
+	});
+
+	if (result === null) return null;
+	if (!result.ok) throw new Error(result.error);
+	return result.value;
+}
+
+// ============================================================================
+// SESSION HELPERS
+// ============================================================================
 
 function entryToMessage(entry: SessionEntry): AgentMessage | undefined {
 	if (entry.type === "message") {
@@ -81,110 +291,83 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("handoff", {
 		description: "Transfer context to a new focused session",
 		handler: async (args, ctx) => {
-			if (ctx.mode !== "tui") {
-				ctx.ui.notify("handoff requires interactive mode", "error");
-				return;
-			}
+			try {
+				if (ctx.mode !== "tui") {
+					ctx.ui.notify("handoff requires interactive mode", "error");
+					return;
+				}
 
-			if (!ctx.model) {
-				ctx.ui.notify("No model selected", "error");
-				return;
-			}
+				if (!ctx.isIdle()) {
+					ctx.ui.notify("Waiting for the current agent turn to finish before handing off...", "info");
+					await ctx.waitForIdle();
+				}
 
-			const goal = args.trim();
-			if (!goal) {
-				ctx.ui.notify("Usage: /handoff <goal for new thread>", "error");
-				return;
-			}
+				const goal = args.trim() || DEFAULT_GOAL;
 
-			// Gather conversation context from current branch. If the branch was compacted,
-			// include the compaction summary plus entries from firstKeptEntryId onward.
-			const messages = getHandoffMessages(ctx.sessionManager.getBranch());
-
-			if (messages.length === 0) {
-				ctx.ui.notify("No conversation to hand off", "error");
-				return;
-			}
-
-			// Convert to LLM format and serialize
-			const llmMessages = convertToLlm(messages);
-			const conversationText = serializeConversation(llmMessages);
-			const currentSessionFile = ctx.sessionManager.getSessionFile();
-
-			// Generate the handoff prompt with loader UI
-			const result = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
-				const loader = new BorderedLoader(tui, theme, `Generating handoff prompt...`);
-				loader.onAbort = () => done(null);
-
-				const doGenerate = async () => {
-					const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model!);
-					if (!auth.ok || !auth.apiKey) {
-						throw new Error(auth.ok ? `No API key for ${ctx.model!.provider}` : auth.error);
-					}
-
-					const userMessage: Message = {
-						role: "user",
-						content: [
-							{
-								type: "text",
-								text: `## Conversation History\n\n${conversationText}\n\n## User's Goal for New Thread\n\n${goal}`,
-							},
-						],
-						timestamp: Date.now(),
-					};
-
-					const response = await complete(
-						ctx.model!,
-						{ systemPrompt: SYSTEM_PROMPT, messages: [userMessage] },
-						{ apiKey: auth.apiKey, headers: auth.headers, signal: loader.signal },
+				const config = await loadConfig();
+				const model = resolveConfiguredModel(ctx, config.model);
+				if (!model) {
+					throw new Error(
+						config.model ? `Handoff model not found: ${config.model}` : "No model selected and no handoff model configured",
 					);
+				}
 
-					if (response.stopReason === "aborted") {
-						return null;
-					}
+				// Gather conversation context from current branch. If the branch was compacted,
+				// include the compaction summary plus entries from firstKeptEntryId onward.
+				const messages = getHandoffMessages(ctx.sessionManager.getBranch());
 
-					return response.content
-						.filter((c): c is { type: "text"; text: string } => c.type === "text")
-						.map((c) => c.text)
-						.join("\n");
-				};
+				if (messages.length === 0) {
+					ctx.ui.notify("No conversation to hand off", "error");
+					return;
+				}
 
-				doGenerate()
-					.then(done)
-					.catch((err) => {
-						console.error("Handoff generation failed:", err);
-						done(null);
-					});
+				// Convert to LLM format and serialize.
+				const llmMessages = convertToLlm(messages);
+				const conversationText = serializeConversation(llmMessages);
+				const currentSessionFile = ctx.sessionManager.getSessionFile();
 
-				return loader;
-			});
+				const handoffPrompt = await generateWithLoader(ctx, "Generating handoff prompt", (signal) =>
+					generateHandoffPrompt({
+						ctx,
+						model,
+						conversationText,
+						goal,
+						signal,
+						reasoning: config.thinking === false ? undefined : config.thinking,
+					}),
+				);
 
-			if (result === null) {
-				ctx.ui.notify("Cancelled", "info");
-				return;
-			}
+				if (handoffPrompt === null) {
+					ctx.ui.notify("Cancelled", "info");
+					return;
+				}
 
-			// Let user edit the generated prompt
-			const editedPrompt = await ctx.ui.editor("Edit handoff prompt", result);
+				// Create new session with parent tracking. Use the replacement-session
+				// context for post-switch UI work; the original ctx is stale after a
+				// successful session replacement.
+				const newSessionResult = await ctx.newSession({
+					parentSession: currentSessionFile,
+					withSession: async (replacementCtx) => {
+						try {
+							if (config.mode === "auto") {
+								replacementCtx.ui.notify("Handoff starting...", "info");
+								await replacementCtx.sendUserMessage(handoffPrompt);
+								return;
+							}
 
-			if (editedPrompt === undefined) {
-				ctx.ui.notify("Cancelled", "info");
-				return;
-			}
+							replacementCtx.ui.setEditorText(handoffPrompt);
+							replacementCtx.ui.notify("Handoff draft ready. Submit when ready.", "info");
+						} catch (error) {
+							replacementCtx.ui.notify((error as Error).message, "error");
+						}
+					},
+				});
 
-			// Create new session with parent tracking. Use the replacement-session
-			// context for post-switch UI work; the original ctx is stale after a
-			// successful session replacement.
-			const newSessionResult = await ctx.newSession({
-				parentSession: currentSessionFile,
-				withSession: async (replacementCtx) => {
-					replacementCtx.ui.setEditorText(editedPrompt);
-					replacementCtx.ui.notify("Handoff ready. Submit when ready.", "info");
-				},
-			});
-
-			if (newSessionResult.cancelled) {
-				ctx.ui.notify("New session cancelled", "info");
+				if (newSessionResult.cancelled) {
+					ctx.ui.notify("New session cancelled", "info");
+				}
+			} catch (error) {
+				ctx.ui.notify((error as Error).message, "error");
 			}
 		},
 	});
