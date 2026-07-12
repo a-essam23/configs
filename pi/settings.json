@@ -1,11 +1,11 @@
 {
-  "lastChangelogVersion": "0.79.9",
+  "lastChangelogVersion": "0.80.6",
   "defaultProvider": "deepseek",
   "defaultModel": "deepseek-v4-flash",
-  "defaultThinkingLevel": "xhigh",
+  "defaultThinkingLevel": "high",
   "hideThinkingBlock": false,
   "packages": [
-    "git:github.com/a-essam23/pi-codex-usage@606e4dd",
+    "git:github.com/a-essam23/pi-codex-usage@e23210f",
     "npm:pi-web-access@0.10.7"
   ],
   "theme": "dark",

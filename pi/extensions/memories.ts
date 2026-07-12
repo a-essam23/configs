@@ -14,13 +14,25 @@
  *   local  -> <cwd>/.pi/memories.json
  *
  * Tools:     save_memory, list_memories, read_memories, delete_memory, update_memory
- * Commands:  /memories (view all), /memory add (quick add)
+ * Commands:  /memories (view all), /memory add (quick add), /memory scan (review session-derived candidates)
  * Widget:    Shows live memory counts below the editor
  */
 
-import { getAgentDir, type ExtensionAPI, type ExtensionContext, type Theme } from "@earendil-works/pi-coding-agent";
-import { StringEnum } from "@earendil-works/pi-ai";
-import { Key, matchesKey, Text, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import {
+  BorderedLoader,
+  convertToLlm,
+  getAgentDir,
+  getSettingsListTheme,
+  serializeConversation,
+  type ExtensionAPI,
+  type ExtensionCommandContext,
+  type ExtensionContext,
+  type SessionEntry,
+  type Theme,
+} from "@earendil-works/pi-coding-agent";
+import { completeSimple, StringEnum, type Message, type ThinkingLevel } from "@earendil-works/pi-ai";
+import { Container, Key, matchesKey, type SettingItem, SettingsList, Text, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -39,6 +51,16 @@ interface Memory {
 }
 
 type MemoryScope = "global" | "local";
+
+type MemoryType = "core" | "regular";
+
+interface MemoryCandidate {
+  content: string;
+  key?: string;
+  type: MemoryType;
+  scope: MemoryScope;
+  rationale?: string;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Storage
@@ -100,6 +122,16 @@ function diceCoefficient(a: string, b: string): number {
   return (2 * overlap) / (ba.size + bb.size);
 }
 
+const MEMORY_SAVE_GUIDELINES = [
+  "Save when user states a durable preference, corrects you, establishes a project convention, or you discover a pitfall that would prevent future mistakes.",
+  "Save only if it changes future behavior and isn't obvious from code, docs, or git history.",
+  "Memories must be extremely concise — one short sentence at most.",
+  'Use type "core" rarely (e.g. language choice, accessibility). Use "regular" for project-specific context.',
+  'Use scope "global" for user-wide facts and "local" for project-specific facts.',
+  "Do not save task progress, implementation summaries, build logs, or architecture descriptions.",
+  "Check for existing similar memories before saving new ones. Do not create duplicates.",
+];
+
 type MemoryScopeFilter = "global" | "local" | "both";
 type MemoryTypeFilter = "core" | "regular" | "both";
 
@@ -118,28 +150,129 @@ function scopeOf(memory: Memory): MemoryScope {
   return memory.id.startsWith("global:") ? "global" : "local";
 }
 
+const SEARCH_STOPWORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "as",
+  "at",
+  "be",
+  "but",
+  "by",
+  "can",
+  "did",
+  "do",
+  "does",
+  "for",
+  "from",
+  "had",
+  "has",
+  "have",
+  "how",
+  "i",
+  "if",
+  "in",
+  "is",
+  "it",
+  "me",
+  "my",
+  "of",
+  "on",
+  "or",
+  "our",
+  "that",
+  "the",
+  "their",
+  "this",
+  "to",
+  "was",
+  "we",
+  "were",
+  "what",
+  "when",
+  "where",
+  "why",
+  "with",
+  "you",
+  "your",
+  "should",
+  "about",
+  "only",
+  "one",
+  "thing",
+  "stuff",
+  "issue",
+]);
+
+const SEARCH_TECH_TOKENS = new Set(["db", "go", "hx", "id", "js", "ui", "ux", "x"]);
+
+function normalizeSearchText(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
 function queryTokens(query?: string): string[] {
-  return query ? query.toLowerCase().split(/\s+/).filter(Boolean) : [];
+  if (!query) return [];
+  const raw = normalizeSearchText(query).split(/\s+/).filter(Boolean);
+  const meaningful = raw.filter((token) => (token.length > 2 || SEARCH_TECH_TOKENS.has(token)) && (!SEARCH_STOPWORDS.has(token) || SEARCH_TECH_TOKENS.has(token)));
+  const tokens = meaningful.length > 0 ? meaningful : raw.filter((token) => token.length > 1);
+  return [...new Set(tokens)];
+}
+
+function diceSimilarity(a: string, b: string): number {
+  const left = bigrams(a);
+  const right = bigrams(b);
+  if (left.size === 0 || right.size === 0) return 0;
+  let overlap = 0;
+  for (const item of left) if (right.has(item)) overlap++;
+  return (2 * overlap) / (left.size + right.size);
+}
+
+function tokenWordScore(token: string, word: string): number {
+  if (token === word) return 1;
+  if (word.startsWith(token)) return 0.9;
+  if (token.length >= 3 && word.includes(token)) return 0.75;
+  return diceSimilarity(token, word);
 }
 
 function memorySearchScore(memory: Memory, tokens: string[]): number {
   if (tokens.length === 0) return 1;
 
-  const haystack = `${memory.content} ${memory.key ?? ""}`.toLowerCase();
+  const key = normalizeSearchText(memory.key ?? "");
+  const content = normalizeSearchText(memory.content);
+  const haystack = `${key} ${content}`.trim();
   const words = haystack.split(/\s+/).filter(Boolean);
-  let totalScore = 0;
+  const query = tokens.join(" ");
 
+  let score = 0;
+  if (key && key === query) score += 20;
+  if (key && key.includes(query)) score += 12;
+  if (content.includes(query)) score += 8;
+
+  let matched = 0;
   for (const token of tokens) {
     let best = 0;
     for (const word of words) {
-      const score = diceCoefficient(token, word);
-      if (score > best) best = score;
+      const wordScore = tokenWordScore(token, word);
+      if (wordScore > best) best = wordScore;
     }
-    if (best < 0.5) return -1;
-    totalScore += best;
+
+    if (key.split(/\s+/).includes(token)) best += 0.4;
+    if (best >= 0.65) {
+      matched++;
+      score += Math.min(best, 1.25);
+    }
   }
 
-  return totalScore;
+  if (matched === 0) return -1;
+
+  const coverage = matched / tokens.length;
+  // Long natural-language queries should not fail because of extra words, but
+  // they still need either decent coverage or at least two meaningful hits.
+  if (tokens.length === 1 && coverage < 1) return -1;
+  if (tokens.length > 1 && coverage < 0.3 && matched < 2) return -1;
+
+  return score + coverage * 3 + matched * 0.35;
 }
 
 function selectMemories(params: MemorySelectionParams): Memory[] {
@@ -184,6 +317,280 @@ function selectWithLimit(params: MemorySelectionParams): { results: Memory[]; to
 
 function memoryKey(memory: Memory): string {
   return memory.key ?? memory.id;
+}
+
+function isDuplicateMemoryCandidate(candidate: MemoryCandidate, memories: Memory[]): boolean {
+  const candidateText = candidate.content.trim().toLowerCase();
+  return memories.some((memory) => {
+    if (candidate.key && memory.key === candidate.key) return true;
+    return diceCoefficient(candidateText, memory.content.trim().toLowerCase()) >= 0.82;
+  });
+}
+
+function dedupeMemoryCandidates(candidates: MemoryCandidate[], memories: Memory[]): MemoryCandidate[] {
+  const accepted: MemoryCandidate[] = [];
+  const acceptedMemories: Memory[] = [];
+  for (const candidate of candidates) {
+    if (isDuplicateMemoryCandidate(candidate, [...memories, ...acceptedMemories])) continue;
+    accepted.push(candidate);
+    acceptedMemories.push({
+      id: `${candidate.scope}:candidate`,
+      content: candidate.content,
+      key: candidate.key,
+      type: candidate.type,
+      timestamp: "",
+    });
+  }
+  return accepted;
+}
+
+function saveMemoryRecord(cwd: string, params: { content: string; key?: string; type?: MemoryType; scope?: MemoryScope }): Memory {
+  const scope = params.scope ?? "local";
+  const type = params.type ?? "regular";
+  const memory: Memory = {
+    id: makeId(scope),
+    content: params.content.trim(),
+    key: params.key?.trim() || undefined,
+    type,
+    timestamp: new Date().toISOString(),
+  };
+
+  if (scope === "global") {
+    globalMemories.push(memory);
+    saveMemories(GLOBAL_FILE, globalMemories);
+  } else {
+    localMemories.push(memory);
+    saveMemories(localFile(cwd), localMemories);
+  }
+
+  sessionNewCount++;
+  refreshStatus();
+  return memory;
+}
+
+const MEMORY_SCAN_SYSTEM_PROMPT = `You are a memory curation assistant. Given conversation history, the memories extension's save policy, and existing memories, propose only high-confidence durable memories worth saving.
+
+Rules:
+- Follow the provided memory save policy exactly; it is the source of truth.
+- Output ONLY a valid JSON array. No preamble, no explanation, no markdown — just the JSON array.
+- Each object in the array must have: content, key, type, scope, and rationale.
+- content must be one concise sentence.
+- key must be a short kebab-case slug.
+- type must be "core" or "regular".
+- scope must be "global" or "local".
+- Do not propose duplicates or near-duplicates of existing memories.
+- If there are no strong candidates, output [].`;
+
+type ScanModel = NonNullable<ExtensionCommandContext["model"]>;
+
+function responseText(response: Awaited<ReturnType<typeof completeSimple>>): string {
+  return response.content
+    .filter((content): content is { type: "text"; text: string } => content.type === "text")
+    .map((content) => content.text)
+    .join("\n")
+    .trim();
+}
+
+function parseJsonArray(text: string): unknown[] {
+  const trimmed = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+
+  // Find the first `[` that starts a JSON array (not text like "[Assistant" or "[Some label]").
+  // A JSON array starts with `[` followed by whitespace then `{`, `"`, `]`, or a JSON primitive.
+  let start = -1;
+  for (let i = 0; i < trimmed.length; i++) {
+    if (trimmed[i] !== "[") continue;
+    const after = trimmed.slice(i + 1).trimStart();
+    if (!after || after[0] === "{" || after[0] === '"' || after[0] === "[" || after[0] === "]" || after[0] === "t" || after[0] === "f" || after[0] === "n" || "0123456789-".includes(after[0])) {
+      start = i;
+      break;
+    }
+    // If `[` is followed by a capital letter ("[Label", "[Assistant"), skip it.
+  }
+  if (start < 0) return [];
+
+  const end = trimmed.lastIndexOf("]");
+  if (end < start) return [];
+
+  try {
+    const parsed = JSON.parse(trimmed.slice(start, end + 1));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function isMemoryCandidate(value: unknown): value is MemoryCandidate {
+  const candidate = value as Partial<MemoryCandidate>;
+  return (
+    typeof candidate.content === "string" &&
+    candidate.content.trim().length > 0 &&
+    (candidate.key === undefined || typeof candidate.key === "string") &&
+    (candidate.type === "core" || candidate.type === "regular") &&
+    (candidate.scope === "global" || candidate.scope === "local") &&
+    (candidate.rationale === undefined || typeof candidate.rationale === "string")
+  );
+}
+
+async function generateWithLoader<T>(
+  ctx: ExtensionContext,
+  label: string,
+  fn: (signal: AbortSignal) => Promise<T | null>,
+): Promise<T | null> {
+  const result = await ctx.ui.custom<
+    | { ok: true; value: T }
+    | { ok: false; error: string }
+    | null
+  >((tui, theme, _keybindings, done) => {
+    const loader = new BorderedLoader(tui, theme, `${label}...`);
+    loader.onAbort = () => done(null);
+
+    fn(loader.signal)
+      .then((value) => done(value === null ? null : { ok: true, value }))
+      .catch((error) => {
+        console.error(`${label} failed:`, error);
+        done({ ok: false, error: (error as Error).message });
+      });
+
+    return loader;
+  });
+
+  if (result === null) return null;
+  if (!result.ok) throw new Error(result.error);
+  return result.value;
+}
+
+async function generateMemoryCandidates(input: {
+  model: ScanModel;
+  apiKey: string;
+  headers?: Record<string, string>;
+  conversationText: string;
+  existingMemories: Memory[];
+  signal?: AbortSignal;
+  reasoning?: ThinkingLevel;
+}): Promise<MemoryCandidate[] | null> {
+  const existing = input.existingMemories
+    .map((memory) => `- [${scopeOf(memory)}/${memory.type}] ${memory.key ?? ""}: ${memory.content}`)
+    .join("\n");
+  const policy = MEMORY_SAVE_GUIDELINES.map((line) => `- ${line}`).join("\n");
+  const userMessage: Message = {
+    role: "user",
+    content: [
+      {
+        type: "text",
+        text: `## Memory Save Policy\n\n${policy}\n\n## Existing Memories\n\n${existing || "(none)"}\n\n## Conversation History\n\n${input.conversationText}`,
+      },
+    ],
+    timestamp: Date.now(),
+  };
+
+  const response = await completeSimple(
+    input.model,
+    { systemPrompt: MEMORY_SCAN_SYSTEM_PROMPT, messages: [userMessage] },
+    {
+      apiKey: input.apiKey,
+      headers: input.headers,
+      signal: input.signal,
+      ...(input.reasoning ? { reasoning: input.reasoning } : {}),
+    },
+  );
+
+  if (response.stopReason === "aborted") return null;
+  if (response.stopReason === "error") throw new Error(response.errorMessage ?? "Memory scan failed");
+
+  return parseJsonArray(responseText(response)).filter(isMemoryCandidate).slice(0, 8);
+}
+
+async function reviewMemoryCandidates(ctx: ExtensionContext, candidates: MemoryCandidate[]): Promise<MemoryCandidate[] | null> {
+  if (candidates.length === 0) return [];
+
+  const selected = new Map(candidates.map((_candidate, index) => [String(index), "skip"]));
+  const items: SettingItem[] = candidates.map((candidate, index) => ({
+    id: String(index),
+    label: `[${candidate.scope}/${candidate.type}] ${candidate.key ?? "memory"}`,
+    description: `${candidate.content}${candidate.rationale ? `\nWhy: ${candidate.rationale}` : ""}`,
+    currentValue: "skip",
+    values: ["skip", "save"],
+  }));
+
+  const result = await ctx.ui.custom<"done">((tui, theme, _keybindings, done) => {
+    const container = new Container();
+    container.addChild(new Text(theme.fg("accent", theme.bold("Memory candidates")), 1, 1));
+    container.addChild(new Text(theme.fg("muted", "Toggle candidates to save. Close with Escape when done."), 1, 0));
+
+    const settings = new SettingsList(
+      items,
+      Math.min(items.length + 4, 16),
+      getSettingsListTheme(),
+      (id, newValue) => selected.set(id, newValue),
+      () => done("done"),
+      { enableSearch: true },
+    );
+    container.addChild(settings);
+
+    return {
+      render: (width) => container.render(width),
+      invalidate: () => container.invalidate(),
+      handleInput: (data) => settings.handleInput?.(data),
+    };
+  });
+
+  if (result !== "done") return null;
+  return candidates.filter((_candidate, index) => selected.get(String(index)) === "save");
+}
+
+async function scanConversationForMemories(input: {
+  ctx: ExtensionContext;
+  cwd: string;
+  model: ScanModel;
+  apiKey: string;
+  headers?: Record<string, string>;
+  conversationText: string;
+  reasoning?: ThinkingLevel;
+}): Promise<{ savedCount: number; candidateCount: number } | null> {
+  reloadAll(input.cwd);
+  const candidates = await generateWithLoader(input.ctx, "Scanning memories", (signal) =>
+    generateMemoryCandidates({
+      model: input.model,
+      apiKey: input.apiKey,
+      headers: input.headers,
+      conversationText: input.conversationText,
+      existingMemories: allMemories(),
+      signal,
+      reasoning: input.reasoning,
+    }),
+  );
+
+  if (candidates === null) return null;
+  const filtered = dedupeMemoryCandidates(candidates, allMemories());
+  const selected = await reviewMemoryCandidates(input.ctx, filtered);
+  if (selected === null) return null;
+
+  for (const candidate of selected) {
+    saveMemoryRecord(input.cwd, candidate);
+  }
+
+  return { savedCount: selected.length, candidateCount: filtered.length };
+}
+
+function entryToMessage(entry: SessionEntry): AgentMessage | undefined {
+  if (entry.type === "message") return entry.message;
+  if (entry.type === "compaction") {
+    return {
+      role: "compactionSummary",
+      summary: entry.summary,
+      tokensBefore: entry.tokensBefore,
+      timestamp: new Date(entry.timestamp).getTime(),
+    };
+  }
+  return undefined;
+}
+
+function getScanMessages(branch: SessionEntry[]): AgentMessage[] {
+  return branch.map(entryToMessage).filter((message) => message !== undefined);
+}
+
+function serializeBranch(branch: SessionEntry[]): string {
+  return serializeConversation(convertToLlm(getScanMessages(branch)));
 }
 
 function formatMemoryList(memories: Memory[], total: number): string {
@@ -284,12 +691,9 @@ function buildMemoriesSection(): string {
   }
 
   lines.push("Memory policy:");
-  lines.push("- Consider saving a memory when the user states a durable preference, corrects your behavior, establishes a project convention, or you discover a non-obvious pitfall that would prevent future mistakes.");
-  lines.push("- Save only if the memory would change future assistant behavior and is not obvious from code, docs, git history, or the current task.");
-  lines.push("- When the save criteria are met, call save_memory before the final answer.");
-  lines.push("- Do not save task progress, implementation summaries, build logs, architecture descriptions, or one-off facts.");
-  lines.push("- If a similar memory may already exist, use list_memories/read_memories before saving.");
-  lines.push("- If unsure whether something is durable, reusable, and invisible from code, do not save it.");
+  for (const guideline of MEMORY_SAVE_GUIDELINES) {
+    lines.push(`- ${guideline}`);
+  }
   lines.push("Use list_memories to inspect available memories. Use read_memories with exact keys/ids/slugs for full content.");
 
   return lines.join("\n");
@@ -811,7 +1215,6 @@ export default function (pi: ExtensionAPI) {
     if (currentCtx?.hasUI) {
       currentCtx.ui.setStatus("memories", undefined);
     }
-    currentCtx = null;
   });
 
   // ── Context injection ──────────────────────────────────────────────────
@@ -828,6 +1231,82 @@ export default function (pi: ExtensionAPI) {
     };
   });
 
+  // ── Inter-extension service API ────────────────────────────────────────
+
+  const handleMemoryServiceRequest = (raw: unknown) => {
+    void (async () => {
+      const request = raw as {
+        id?: string;
+        action?: string;
+        cwd?: string;
+        candidate?: MemoryCandidate;
+        candidates?: MemoryCandidate[];
+        conversationText?: string;
+        model?: ScanModel;
+        apiKey?: string;
+        headers?: Record<string, string>;
+        reasoning?: ThinkingLevel;
+      };
+      if (!request.id) return;
+      const reply = (payload: unknown) => pi.events.emit(`memories:response:${request.id}`, payload);
+
+      try {
+        const cwd = request.cwd ?? currentCtx?.cwd;
+        if (!cwd) throw new Error("cwd is required");
+
+        if (request.action === "policy") {
+          reply({ ok: true, policy: MEMORY_SAVE_GUIDELINES });
+          return;
+        }
+
+        reloadAll(cwd);
+
+        if (request.action === "list") {
+          reply({ ok: true, memories: allMemories() });
+          return;
+        }
+
+        if (request.action === "filter-candidates") {
+          reply({ ok: true, candidates: dedupeMemoryCandidates(request.candidates ?? [], allMemories()) });
+          return;
+        }
+
+        if (request.action === "save") {
+          if (!request.candidate) throw new Error("candidate is required");
+          const memory = saveMemoryRecord(cwd, request.candidate);
+          reply({ ok: true, memory });
+          return;
+        }
+
+        if (request.action === "scan-text") {
+          if (!currentCtx?.hasUI) throw new Error("memory scan requires interactive UI");
+          if (!request.conversationText) throw new Error("conversationText is required");
+          if (!request.model) throw new Error("model is required");
+          if (!request.apiKey) throw new Error("apiKey is required");
+
+          const result = await scanConversationForMemories({
+            ctx: currentCtx,
+            cwd,
+            model: request.model,
+            apiKey: request.apiKey,
+            headers: request.headers,
+            conversationText: request.conversationText,
+            reasoning: request.reasoning,
+          });
+          reply({ ok: true, ...(result ?? { savedCount: 0, candidateCount: 0, cancelled: true }) });
+          return;
+        }
+
+        throw new Error(`Unknown memories action: ${request.action ?? "(missing)"}`);
+      } catch (error) {
+        reply({ ok: false, error: (error as Error).message });
+      }
+    })();
+  };
+
+  pi.events.on("memories:request", handleMemoryServiceRequest);
+  pi.events.on("memories:request:v2", handleMemoryServiceRequest);
+
   // ── Tool: save_memory ──────────────────────────────────────────────────
 
   pi.registerTool({
@@ -837,48 +1316,20 @@ export default function (pi: ExtensionAPI) {
       "Save a high-confidence durable memory about the user — preferences, facts, " +
       "conventions, decisions, or hard-won lessons. Use without asking only when it meets the memory policy.",
     promptSnippet: "Save a durable preference, convention, correction, or hard-won lesson",
-    promptGuidelines: [
-      "Consider save_memory when the user states a durable preference, corrects your behavior, establishes a project convention, or you discover a non-obvious pitfall that would prevent future mistakes.",
-      "Save only if the memory would change future assistant behavior and is not obvious from code, docs, git history, or the current task.",
-      "When the save criteria are met, call save_memory before the final answer.",
-      "Do not save task progress, implementation summaries, build logs, architecture descriptions, or one-off facts.",
-      "Memories must be extremely concise — one short sentence at most.",
-      'Use type "core" rarely, only for preferences that affect nearly every interaction (e.g. language choice, accessibility needs, key tool preferences).',
-      'Use type "regular" for project-specific context, past decisions, situational preferences, and hard-won gotchas.',
-      'Use scope "global" for user-wide facts and "local" for project-specific facts.',
-      "Good memories: durable preferences, project conventions, user corrections, design intent not visible from code, or hard-won debugging lessons.",
-      "Bad memories: 'Added X endpoint', 'Moved sidebar rendering', 'Implemented Redis sessions', or 'Current task is to fix login'.",
-      "Use list_memories or read_memories to check for existing similar memories before saving new ones. Do not create duplicates.",
-      "If unsure whether something is durable, reusable, and invisible from code, do not save it.",
-    ],
+    promptGuidelines: MEMORY_SAVE_GUIDELINES,
     parameters: SaveParams,
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const scope = params.scope ?? "local";
-      const type = params.type ?? "regular";
-
-      const memory: Memory = {
-        id: makeId(scope),
-        content: params.content.trim(),
-        key: params.key?.trim() || undefined,
-        type,
-        timestamp: new Date().toISOString(),
-      };
-
-      if (scope === "global") {
-        globalMemories.push(memory);
-        saveMemories(GLOBAL_FILE, globalMemories);
-      } else {
-        localMemories.push(memory);
-        saveMemories(localFile(ctx.cwd), localMemories);
-      }
-
-      sessionNewCount++;
       currentCtx = ctx;
-      refreshStatus();
+      const memory = saveMemoryRecord(ctx.cwd, {
+        content: params.content,
+        key: params.key,
+        type: params.type ?? "regular",
+        scope: params.scope ?? "local",
+      });
 
-      const scopeLabel = scope === "global" ? "global" : "project";
-      const typeLabel = type === "core" ? "core" : "regular";
+      const scopeLabel = scopeOf(memory) === "global" ? "global" : "project";
+      const typeLabel = memory.type === "core" ? "core" : "regular";
       return {
         content: [
           {
@@ -1330,15 +1781,64 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // ── Command: /memory add ───────────────────────────────────────────────
+  // ── Command: /memory add|scan ─────────────────────────────────────────
 
   pi.registerCommand("memory", {
     description:
-      "Add a memory. Usage: /memory add [--global] [--core] [--key <k>] <content>",
+      "Memory utilities. Usage: /memory add [--global] [--core] [--key <k>] <content> | /memory scan",
     handler: async (args, ctx) => {
+      const command = args.trim();
+
+      if (command === "scan") {
+        if (ctx.mode !== "tui") {
+          ctx.ui.notify("/memory scan requires interactive mode", "error");
+          return;
+        }
+        if (!ctx.model) {
+          ctx.ui.notify("No model selected", "error");
+          return;
+        }
+
+        const messages = getScanMessages(ctx.sessionManager.getBranch());
+        if (messages.length === 0) {
+          ctx.ui.notify("No conversation to scan", "error");
+          return;
+        }
+
+        const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model);
+        if (!auth.ok || !auth.apiKey) {
+          ctx.ui.notify(auth.ok ? `No API key for ${ctx.model.provider}` : auth.error, "error");
+          return;
+        }
+
+        const thinking = pi.getThinkingLevel();
+        const result = await scanConversationForMemories({
+          ctx,
+          cwd: ctx.cwd,
+          model: ctx.model,
+          apiKey: auth.apiKey,
+          headers: auth.headers,
+          conversationText: serializeConversation(convertToLlm(messages)),
+          reasoning: thinking === "off" ? undefined : (thinking as ThinkingLevel),
+        });
+
+        if (result === null) {
+          ctx.ui.notify("Cancelled", "info");
+          return;
+        }
+        if (result.savedCount > 0) {
+          ctx.ui.notify(`Saved ${result.savedCount} memor${result.savedCount === 1 ? "y" : "ies"}`, "info");
+        } else if (result.candidateCount > 0) {
+          ctx.ui.notify("No memories saved", "info");
+        } else {
+          ctx.ui.notify("No memory candidates found", "info");
+        }
+        return;
+      }
+
       if (!args.startsWith("add ")) {
         ctx.ui.notify(
-          "Usage: /memory add [--global] [--core] [--key <k>] <content>",
+          "Usage: /memory add [--global] [--core] [--key <k>] <content> | /memory scan",
           "error",
         );
         return;
@@ -1376,25 +1876,8 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      const memory: Memory = {
-        id: makeId(scope),
-        content,
-        key,
-        type,
-        timestamp: new Date().toISOString(),
-      };
-
-      if (scope === "global") {
-        globalMemories.push(memory);
-        saveMemories(GLOBAL_FILE, globalMemories);
-      } else {
-        localMemories.push(memory);
-        saveMemories(localFile(ctx.cwd), localMemories);
-      }
-
-      sessionNewCount++;
       currentCtx = ctx;
-      refreshStatus();
+      saveMemoryRecord(ctx.cwd, { content, key, type, scope });
 
       ctx.ui.notify(`Saved: "${content}"`, "info");
     },

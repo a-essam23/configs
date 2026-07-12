@@ -12,6 +12,7 @@
  *   git clean -f
  *   git commit
  *   git checkout
+ *   git stash
  *   curl | sh / wget | bash
  *   dd writing to /dev/ block devices
  */
@@ -28,6 +29,7 @@ export default function (pi: ExtensionAPI) {
 		/\bgit\s+clean\s+.*-f/i,
 		/\bgit\s+commit\b/i,
 		/\bgit\s+checkout\b/i,
+		/\bgit\s+stash\b/i,
 		/\b(curl|wget)\b.*\|\s*(ba)?sh\b/i,
 		/\bdd\s+.*of=\/dev\//i,
 	];
