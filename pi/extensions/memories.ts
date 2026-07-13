@@ -691,9 +691,12 @@ function buildMemoriesSection(): string {
   }
 
   lines.push("Memory policy:");
-  for (const guideline of MEMORY_SAVE_GUIDELINES) {
-    lines.push(`- ${guideline}`);
-  }
+  lines.push("- Consider saving a memory when the user states a durable preference, corrects your behavior, establishes a project convention, or you discover a non-obvious pitfall that would prevent future mistakes.");
+  lines.push("- Save only if the memory would change future assistant behavior and is not obvious from code, docs, git history, or the current task.");
+  lines.push("- When the save criteria are met, call save_memory before the final answer.");
+  lines.push("- Do not save task progress, implementation summaries, build logs, architecture descriptions, or one-off facts.");
+  lines.push("- If a similar memory may already exist, use list_memories/read_memories before saving.");
+  lines.push("- If unsure whether something is durable, reusable, and invisible from code, do not save it.");
   lines.push("Use list_memories to inspect available memories. Use read_memories with exact keys/ids/slugs for full content.");
 
   return lines.join("\n");
