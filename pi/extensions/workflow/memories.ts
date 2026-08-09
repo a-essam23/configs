@@ -123,13 +123,16 @@ function diceCoefficient(a: string, b: string): number {
 }
 
 const MEMORY_SAVE_GUIDELINES = [
-  "Save when user states a durable preference, corrects you, establishes a project convention, or you discover a pitfall that would prevent future mistakes.",
-  "Save only if it changes future behavior and isn't obvious from code, docs, or git history.",
+  "The memory system primarily remembers the user and durable assistant behavior, not repository state.",
+  "Save only high-confidence information that changes future assistant behavior and is not available in code, repository instructions, canonical project docs, skills, or git history.",
+  "Treat repository-declared canonical sources as authoritative, including RULES.md, AGENTS.md, append instruction files, skill files, and architecture, bug, roadmap, or plan documents when present; never duplicate them.",
+  "Project rules belong in RULES.md or AGENTS.md; architecture, product, and roadmap decisions belong in project docs; reusable framework gotchas belong in skills; resolved defects belong in bug documentation.",
+  "Never save architecture descriptions, implementation plans or status, file paths, source-code recipes, build instructions, temporary decisions, resolved bug histories, or duplicated project rules.",
   "Memories must be extremely concise — one short sentence at most.",
-  'Use type "core" rarely (e.g. language choice, accessibility). Use "regular" for project-specific context.',
+  'Use type "core" only for global user preferences or facts that should affect every project; use "regular" for rare project-specific exceptions that are not documented elsewhere.',
   'Use scope "global" for user-wide facts and "local" for project-specific facts.',
-  "Do not save task progress, implementation summaries, build logs, or architecture descriptions.",
-  "Check for existing similar memories before saving new ones. Do not create duplicates.",
+  "Check existing memories and canonical project sources before saving. Do not create duplicates.",
+  "If the correct destination is unclear, do not save a memory.",
 ];
 
 type MemoryScopeFilter = "global" | "local" | "both";
@@ -319,12 +322,37 @@ function memoryKey(memory: Memory): string {
   return memory.key ?? memory.id;
 }
 
-function isDuplicateMemoryCandidate(candidate: MemoryCandidate, memories: Memory[]): boolean {
+function findDuplicateMemory(
+  candidate: { content: string; key?: string },
+  memories: Memory[],
+  excludeID?: string,
+): Memory | undefined {
   const candidateText = candidate.content.trim().toLowerCase();
-  return memories.some((memory) => {
+  return memories.find((memory) => {
+    if (memory.id === excludeID) return false;
     if (candidate.key && memory.key === candidate.key) return true;
     return diceCoefficient(candidateText, memory.content.trim().toLowerCase()) >= 0.82;
   });
+}
+
+function isDuplicateMemoryCandidate(candidate: MemoryCandidate, memories: Memory[]): boolean {
+  return findDuplicateMemory(candidate, memories) !== undefined;
+}
+
+function assertMemoryWrite(params: {
+  content: string;
+  key?: string;
+  type: MemoryType;
+  scope: MemoryScope;
+}, excludeID?: string): void {
+  if (params.type === "core" && params.scope !== "global") {
+    throw new Error("Core memories must be global; project memories must be regular.");
+  }
+
+  const duplicate = findDuplicateMemory(params, allMemories(), excludeID);
+  if (duplicate) {
+    throw new Error(`Similar memory already exists: ${memoryKey(duplicate)}`);
+  }
 }
 
 function dedupeMemoryCandidates(candidates: MemoryCandidate[], memories: Memory[]): MemoryCandidate[] {
@@ -347,6 +375,8 @@ function dedupeMemoryCandidates(candidates: MemoryCandidate[], memories: Memory[
 function saveMemoryRecord(cwd: string, params: { content: string; key?: string; type?: MemoryType; scope?: MemoryScope }): Memory {
   const scope = params.scope ?? "local";
   const type = params.type ?? "regular";
+  assertMemoryWrite({ content: params.content, key: params.key, type, scope });
+
   const memory: Memory = {
     id: makeId(scope),
     content: params.content.trim(),
@@ -368,10 +398,13 @@ function saveMemoryRecord(cwd: string, params: { content: string; key?: string; 
   return memory;
 }
 
-const MEMORY_SCAN_SYSTEM_PROMPT = `You are a memory curation assistant. Given conversation history, the memories extension's save policy, and existing memories, propose only high-confidence durable memories worth saving.
+const MEMORY_SCAN_SYSTEM_PROMPT = `You are a conservative memory curation assistant. Given conversation history, the memories extension's save policy, and existing memories, propose only high-confidence durable memories worth saving.
 
 Rules:
 - Follow the provided memory save policy exactly; it is the source of truth.
+- This scan has no direct repository access. Do not claim to have verified a canonical source unless that evidence appears in the supplied conversation.
+- The repository is not the memory system. Reject project rules, architecture, product decisions, implementation recipes, plans, bug histories, build instructions, and facts already available in canonical files.
+- Prefer [] over a weak candidate. Most conversations should produce no memory.
 - Output ONLY a valid JSON array. No preamble, no explanation, no markdown — just the JSON array.
 - Each object in the array must have: content, key, type, scope, and rationale.
 - content must be one concise sentence.
@@ -691,12 +724,10 @@ function buildMemoriesSection(): string {
   }
 
   lines.push("Memory policy:");
-  lines.push("- Consider saving a memory when the user states a durable preference, corrects your behavior, establishes a project convention, or you discover a non-obvious pitfall that would prevent future mistakes.");
-  lines.push("- Save only if the memory would change future assistant behavior and is not obvious from code, docs, git history, or the current task.");
-  lines.push("- When the save criteria are met, call save_memory before the final answer.");
-  lines.push("- Do not save task progress, implementation summaries, build logs, architecture descriptions, or one-off facts.");
-  lines.push("- If a similar memory may already exist, use list_memories/read_memories before saving.");
-  lines.push("- If unsure whether something is durable, reusable, and invisible from code, do not save it.");
+  for (const guideline of MEMORY_SAVE_GUIDELINES) {
+    lines.push(`- ${guideline}`);
+  }
+  lines.push("When the save criteria are met, call save_memory before the final answer.");
   lines.push("Use list_memories to inspect available memories. Use read_memories with exact keys/ids/slugs for full content.");
 
   return lines.join("\n");
@@ -1689,9 +1720,18 @@ export default function (pi: ExtensionAPI) {
         };
       }
 
-      if (params.content !== undefined) memory.content = params.content.trim();
-      if (params.key !== undefined) memory.key = params.key.trim() || undefined;
-      if (params.type !== undefined) memory.type = params.type;
+      const nextContent = params.content !== undefined ? params.content.trim() : memory.content;
+      const nextKey = params.key !== undefined ? params.key.trim() || undefined : memory.key;
+      const nextType = params.type !== undefined ? params.type : memory.type;
+      const nextScope = parsed.scope;
+      assertMemoryWrite(
+        { content: nextContent, key: nextKey, type: nextType, scope: nextScope },
+        memory.id,
+      );
+
+      memory.content = nextContent;
+      memory.key = nextKey;
+      memory.type = nextType;
 
       saveMemories(filePath, list);
 
