@@ -1,6 +1,6 @@
 {
   "model": "deepseek/deepseek-v4-flash",
-  "thinking": false,
+  "thinking": "low",
   "mode": "draft",
   "memories": "off"
 }

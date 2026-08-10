@@ -1,26 +1,5 @@
 [
   {
-    "id": "global:66427921-265f-4695-a329-9bad2c953264",
-    "content": "Always ask for direct confirmation before starting any implementation or writing code. Never begin coding without explicit approval.",
-    "key": "coding-style",
-    "type": "core",
-    "timestamp": "2026-06-05T02:48:45.932Z"
-  },
-  {
-    "id": "global:34d3bec9-2047-460f-be60-51aaa1289b01",
-    "content": "Before building or debugging, always check relevant memories first — they may have rules, gotchas, or patterns that prevent mistakes.",
-    "key": "check-memories-before-building",
-    "type": "core",
-    "timestamp": "2026-06-13T03:33:13.737Z"
-  },
-  {
-    "id": "global:23ce56cd-ca05-41a3-a08f-196ce3e5beb4",
-    "content": "Before starting execution of any plan or sub-phase, present a pre-flight brief that flags questionable items, speculative/premature work, and things needing explicit confirmation before coding. Do not treat draft plans as frozen specs. Sub-phases are individual design decisions — colors, data formats, component structures, text labels, interaction patterns. Never bundle multiple unconfirmed decisions into one batch. If a single edit changes more than one independent thing, pause and verify each choice separately before coding.",
-    "key": "pre-flight-before-execution",
-    "type": "core",
-    "timestamp": "2026-07-10T23:13:13.472Z"
-  },
-  {
     "id": "global:71d7527b-d4a6-4bf4-8676-b2f4ec3a6f60",
     "content": "Don't let \"it's small\" or \"it's just one field\" shortcut proper abstraction. When something conceptually belongs in its own type or layer, build it from day one — even if it duplicates a few lines. The size of the change is not the measure; the clarity of the abstraction is.",
     "key": "proportion-over-pattern",
@@ -40,5 +19,33 @@
     "key": "no-compat-wrappers",
     "type": "core",
     "timestamp": "2026-06-18T15:39:11.005Z"
+  },
+  {
+    "id": "global:34d3bec9-2047-460f-be60-51aaa1289b01",
+    "content": "Before building or debugging, always check relevant memories first — they may have rules, gotchas, or patterns that prevent mistakes.",
+    "key": "check-memories-before-building",
+    "type": "core",
+    "timestamp": "2026-06-13T03:33:13.737Z"
+  },
+  {
+    "id": "global:23ce56cd-ca05-41a3-a08f-196ce3e5beb4",
+    "content": "Before starting execution of any plan or sub-phase, present a pre-flight brief that flags questionable items, speculative/premature work, and things needing explicit confirmation before coding. Do not treat draft plans as frozen specs. Sub-phases are individual design decisions — colors, data formats, component structures, text labels, interaction patterns. Never bundle multiple unconfirmed decisions into one batch. If a single edit changes more than one independent thing, pause and verify each choice separately before coding.",
+    "key": "pre-flight-before-execution",
+    "type": "core",
+    "timestamp": "2026-07-10T23:13:13.472Z"
+  },
+  {
+    "id": "global:c0d19d19-ef27-4e04-b48a-b5831b0c5971",
+    "content": "Do not ask about routine validation sizes when established project patterns can supply sensible defaults.",
+    "key": "routine-validation-defaults",
+    "type": "core",
+    "timestamp": "2026-07-27T00:26:15.518Z"
+  },
+  {
+    "id": "global:81f51e08-2045-4e98-adb0-53212d4007d9",
+    "content": "Prefer clear named intermediate values over dense inline expressions.",
+    "key": "coding-style",
+    "type": "core",
+    "timestamp": "2026-08-09T12:48:40.709Z"
   }
 ]

@@ -1,38 +1,39 @@
 return {
   "nvim-treesitter/nvim-treesitter",
-  branch = "master",
+  branch = "main",
+  lazy = false,
   build = ":TSUpdate",
   config = function()
-    require("nvim-treesitter.configs").setup({
-      ensure_installed = {
-        "lua",
-        "vim",
-        "vimdoc",
-        "bash",
-        "json",
-        "yaml",
-        "markdown",
-        "markdown_inline",
-        -- Go
-        "go",
-        "gomod",
-        "gowork",
-        -- templ
-        "templ",
-      },
-      auto_install = true,
-      highlight = {
-        enable = true,
-        disable = { "markdown" },
-      },
-      indent = { enable = true },
+    local languages = {
+      "lua",
+      "vim",
+      "vimdoc",
+      "bash",
+      "json",
+      "yaml",
+      -- Go
+      "go",
+      "gomod",
+      "gowork",
+      -- templ
+      "templ",
+    }
+
+    require("nvim-treesitter").setup()
+    require("nvim-treesitter").install(languages)
+
+    vim.api.nvim_create_autocmd("FileType", {
+      pattern = languages,
+      callback = function(args)
+        vim.treesitter.start(args.buf)
+        vim.bo[args.buf].indentexpr = "v:lua.require'nvim-treesitter'.indentexpr()"
+      end,
     })
 
-    -- Disable treesitter for markdown and use built-in syntax
     vim.api.nvim_create_autocmd("FileType", {
       pattern = "markdown",
-      callback = function()
-        vim.treesitter.stop()
+      callback = function(args)
+        vim.treesitter.stop(args.buf)
       end,
     })
   end,
