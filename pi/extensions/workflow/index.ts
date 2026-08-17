@@ -5,6 +5,7 @@ import registerMemories from "./memories.ts";
 import registerQuestionnaire from "./questionnaire.ts";
 import registerRulesMd from "./rules-md.ts";
 import registerSkills from "./skills.ts";
+import registerSessionTitle from "./session-title.ts";
 import registerTodo from "./todo.ts";
 
 export default function workflowExtension(pi: ExtensionAPI): void {
@@ -14,5 +15,6 @@ export default function workflowExtension(pi: ExtensionAPI): void {
   registerQuestionnaire(pi);
   registerRulesMd(pi);
   registerSkills(pi);
+  registerSessionTitle(pi);
   registerTodo(pi);
 }

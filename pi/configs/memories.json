@@ -47,5 +47,12 @@
     "key": "coding-style",
     "type": "core",
     "timestamp": "2026-08-09T12:48:40.709Z"
+  },
+  {
+    "id": "global:a8cf7318-186a-40e4-bf26-9531d0d50a80",
+    "content": "Prefer simple current-need implementations; avoid speculative types, structs, and elaborate method returns.",
+    "key": "simple-current-contracts",
+    "type": "core",
+    "timestamp": "2026-08-15T13:22:19.389Z"
   }
 ]

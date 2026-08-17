@@ -1,8 +1,8 @@
 {
-  "lastChangelogVersion": "0.84.1",
-  "defaultProvider": "deepseek",
-  "defaultModel": "deepseek-v4-flash",
-  "defaultThinkingLevel": "high",
+  "lastChangelogVersion": "0.84.2",
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.6-sol",
+  "defaultThinkingLevel": "low",
   "hideThinkingBlock": false,
   "packages": [
     "git:github.com/a-essam23/pi-codex-usage@e23210f",
