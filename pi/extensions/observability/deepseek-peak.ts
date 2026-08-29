@@ -4,7 +4,9 @@
  * Ultra-minimal footer indicator: shows ⚡ + time remaining during peak
  * pricing hours, and nothing during off-peak.
  *
- * Peak hours (UTC): 1:00–4:00 AM and 6:00–10:00 AM
+ * Peak hours (UTC): 1:00–4:00 AM and 6:00–10:00 AM, weekdays only.
+ * Off-peak rates apply all day on weekends (Saturdays and Sundays, Beijing
+ * time) per DeepSeek's billing rules effective 2026-08-23 00:00 Beijing time.
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -17,11 +19,20 @@ const PEAK_PERIODS: Array<{ start: number; end: number }> = [
 
 const MINUTE_MS = 60 * 1000;
 
+// DeepSeek bills in Beijing time (UTC+8); weekends there are off-peak all day.
+const BEIJING_UTC_OFFSET_MS = 8 * 60 * 60 * 1000;
+
 // ── Time helpers ───────────────────────────────────────────────────────────
 
 /** Return the current peak period if we're inside one, or undefined. */
 function currentPeakPeriod(utcHours: number): { start: number; end: number } | undefined {
   return PEAK_PERIODS.find((p) => utcHours >= p.start && utcHours < p.end);
+}
+
+/** True if `now` falls on a Saturday or Sunday in Beijing time (UTC+8). */
+function isWeekendInBeijing(now: Date): boolean {
+  const beijingDay = new Date(now.getTime() + BEIJING_UTC_OFFSET_MS).getUTCDay();
+  return beijingDay === 0 || beijingDay === 6;
 }
 
 /** Format a duration in ms to "Xh Ym" or "Xm" for short durations. */
@@ -35,6 +46,7 @@ function formatDuration(ms: number): string {
 
 /** Build the status text — minimal during peak, nothing during off-peak. */
 function buildStatusText(now: Date): string | undefined {
+  if (isWeekendInBeijing(now)) return undefined; // off-peak all day on weekends
   const period = currentPeakPeriod(now.getUTCHours());
   if (!period) return undefined; // off-peak → no status
 

@@ -54,5 +54,19 @@
     "key": "simple-current-contracts",
     "type": "core",
     "timestamp": "2026-08-15T13:22:19.389Z"
+  },
+  {
+    "id": "global:04de04f2-b354-4ecb-badb-819e37fa88d4",
+    "content": "When the user gives blanket approval for a multi-step implementation, do not ask for per-phase confirmation; use todos when requested.",
+    "key": "blanket-execution-approval",
+    "type": "core",
+    "timestamp": "2026-08-21T17:19:04.293Z"
+  },
+  {
+    "id": "global:699dcc12-0f78-4431-a8fa-893f30121700",
+    "content": "Any script or feature that mutates data must include a dry-run mode (validate + report, write nothing) as a prerequisite.",
+    "key": "dry-run-prerequisite",
+    "type": "core",
+    "timestamp": "2026-08-23T21:38:40.326Z"
   }
 ]
