@@ -8,10 +8,12 @@
  * Memory model:
  *   type:  "core" (always loaded) | "regular" (on-demand recall)
  *   scope: "global" (all projects) | "local" (this project only)
+ *   location exclusions: selected global memories can be disabled for one exact cwd
  *
  * Storage:
  *   global -> ~/.pi/agent/configs/memories.json
  *   local  -> <cwd>/.pi/memories.json
+ *   exclusions -> <cwd>/.pi/memory-settings.json (never inherited by subdirectories)
  *
  * Tools:     save_memory, list_memories, read_memories, delete_memory, update_memory
  * Commands:  /memories (view all), /memory add (quick add), /memory scan (review session-derived candidates)
@@ -37,6 +39,12 @@ import { Type } from "typebox";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
+import {
+  isGlobalMemoryDisabled,
+  loadMemorySettings,
+  setGlobalMemoryDisabled,
+  type MemorySettings,
+} from "./memory-settings.ts";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Types
@@ -649,16 +657,25 @@ function formatMemoryContent(memories: Memory[], total: number): string {
 
 let globalMemories: Memory[] = [];
 let localMemories: Memory[] = [];
+let memorySettings: MemorySettings = { disabledGlobalMemoryIds: [] };
 let sessionNewCount = 0; // memories added this session
 let currentCtx: ExtensionContext | null = null;
 
 function reloadAll(cwd: string): void {
   globalMemories = loadMemories(GLOBAL_FILE);
   localMemories = loadMemories(localFile(cwd));
+  memorySettings = loadMemorySettings(cwd);
+}
+
+function storedMemories(): Memory[] {
+  return [...globalMemories, ...localMemories];
 }
 
 function allMemories(): Memory[] {
-  return [...globalMemories, ...localMemories];
+  return [
+    ...globalMemories.filter((memory) => !isGlobalMemoryDisabled(memorySettings, memory.id)),
+    ...localMemories,
+  ];
 }
 
 function stats() {
@@ -667,7 +684,13 @@ function stats() {
   const regular = all.filter((m) => m.type === "regular").length;
   const global_ = all.filter((m) => m.id.startsWith("global:")).length;
   const local_ = all.filter((m) => m.id.startsWith("local:")).length;
-  return { core, regular, global: global_, local: local_, total: all.length };
+  const disabled = globalMemories.filter((memory) => isGlobalMemoryDisabled(memorySettings, memory.id)).length;
+  return { core, regular, global: global_, local: local_, disabled, total: all.length };
+}
+
+function findGlobalMemories(identifier: string): Memory[] {
+  const exact = globalMemories.find((memory) => memory.id === identifier);
+  return exact ? [exact] : globalMemories.filter((memory) => memory.key === identifier);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -919,7 +942,7 @@ class MemoriesList {
 
   private reload(): void {
     reloadAll(this.cwd);
-    this.memories = this.orderMemories(allMemories());
+    this.memories = this.orderMemories(storedMemories());
     if (this.selected >= this.memories.length) {
       this.selected = Math.max(0, this.memories.length - 1);
     }
@@ -927,6 +950,30 @@ class MemoriesList {
 
   private selectedMemory(): Memory | undefined {
     return this.memories[this.selected];
+  }
+
+  private toggleSelectedDisabled(): void {
+    const memory = this.selectedMemory();
+    if (!memory) return;
+
+    if (scopeOf(memory) !== "global") {
+      this.message = "Only global memories can be disabled here";
+      return;
+    }
+
+    const disabled = !isGlobalMemoryDisabled(memorySettings, memory.id);
+    try {
+      const change = setGlobalMemoryDisabled(this.cwd, memory.id, disabled);
+      this.reload();
+      refreshStatus();
+      this.message = `${disabled ? "Disabled" : "Enabled"} ${memoryKey(memory)} here`;
+
+      if (!change.changed) {
+        this.message = `${disabled ? "Already disabled" : "Already enabled"} ${memoryKey(memory)} here`;
+      }
+    } catch (error) {
+      this.message = `Could not update memory settings: ${(error as Error).message}`;
+    }
   }
 
   private deleteSelected(): void {
@@ -950,6 +997,7 @@ class MemoriesList {
 
     const removed = list.splice(idx, 1)[0]!;
     saveMemories(filePath, list);
+    if (parsed.scope === "global") setGlobalMemoryDisabled(this.cwd, removed.id, false);
     this.expanded.delete(removed.id);
     this.pendingDeleteId = undefined;
     this.reload();
@@ -1012,6 +1060,7 @@ class MemoriesList {
     toList.push(moved);
     saveMemories(fromFile, fromList);
     saveMemories(toFile, toList);
+    if (parsed.scope === "global") setGlobalMemoryDisabled(this.cwd, memory.id, false);
 
     if (this.expanded.delete(memory.id)) this.expanded.add(moved.id);
     this.pendingDeleteId = undefined;
@@ -1089,6 +1138,12 @@ class MemoriesList {
       return;
     }
 
+    if (matchesKey(data, "x")) {
+      this.toggleSelectedDisabled();
+      this.requestRender();
+      return;
+    }
+
     if (matchesKey(data, "s")) {
       this.switchSelectedScope();
       this.requestRender();
@@ -1115,7 +1170,7 @@ class MemoriesList {
     lines.push(truncateToWidth(header, width));
     lines.push(
       truncateToWidth(
-        `  ${th.fg("dim", "↑/↓/j/k select · Enter expand · t core/regular · s local/global · d delete · r reload · q close")}`,
+        `  ${th.fg("dim", "↑/↓/j/k select · Enter expand · t core/regular · s local/global · x disable/enable global · d delete · r reload · q close")}`,
         width,
       ),
     );
@@ -1144,7 +1199,8 @@ class MemoriesList {
       const selected = index === this.selected;
       const marker = selected ? th.fg("accent", ">") : " ";
       const key = memory.key ?? memory.id.split(":")[1]!.slice(0, 8);
-      const badges = th.fg("dim", `[${scope} ${memory.type}]`);
+      const disabled = scope === "global" && isGlobalMemoryDisabled(memorySettings, memory.id);
+      const badges = th.fg("dim", `[${scope}${disabled ? " disabled" : ""} ${memory.type}]`);
       const label = `${marker} ${badges} ${th.bold(key)}`;
       const expanded = this.expanded.has(memory.id);
 
@@ -1776,10 +1832,10 @@ export default function (pi: ExtensionAPI) {
   // ── Command: /memories ─────────────────────────────────────────────────
 
   pi.registerCommand("memories", {
-    description: "Browse, expand, delete, and preview saved memories",
+    description: "Browse, expand, delete, disable, and preview saved memories",
     handler: async (args, ctx) => {
       reloadAll(ctx.cwd);
-      const memories = allMemories();
+      const memories = storedMemories();
       const mode = args.trim();
 
       if (!ctx.hasUI) return;
@@ -1800,12 +1856,14 @@ export default function (pi: ExtensionAPI) {
       if (ctx.mode !== "tui") {
         // RPC mode: show text summary
         const s = stats();
+        const disabledSuffix = s.disabled > 0 ? `, ${s.disabled} disabled here` : "";
         const lines = [
-          `${s.total} memories (${s.core} core, ${s.regular} regular)`,
+          `${s.total} active memories (${s.core} core, ${s.regular} regular)${disabledSuffix}`,
           ...memories.map((m) => {
             const scope = m.id.startsWith("global:") ? "global" : "project";
+            const disabled = scope === "global" && isGlobalMemoryDisabled(memorySettings, m.id);
             const typeStr = m.type === "core" ? " [core]" : "";
-            return `  [${scope}]${typeStr} ${m.id.slice(0, 28)}…: ${m.content}`;
+            return `  [${scope}${disabled ? " disabled" : ""}]${typeStr} ${m.id.slice(0, 28)}…: ${m.content}`;
           }),
         ];
         ctx.ui.notify(lines.join("\n"), "info");
@@ -1824,13 +1882,59 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // ── Command: /memory add|scan ─────────────────────────────────────────
+  // ── Command: /memory add|scan|disable|enable ──────────────────────────
 
   pi.registerCommand("memory", {
     description:
-      "Memory utilities. Usage: /memory add [--global] [--core] [--key <k>] <content> | /memory scan",
+      "Memory utilities. Usage: /memory add [--global] [--core] [--key <k>] <content> | /memory scan | /memory disable [--dry-run] <id-or-key> | /memory enable [--dry-run] <id-or-key>",
     handler: async (args, ctx) => {
       const command = args.trim();
+
+      const toggleMatch = command.match(/^(disable|enable)(?:\s+(.+))?$/);
+      if (toggleMatch) {
+        const disabled = toggleMatch[1] === "disable";
+        const toggleArgs = (toggleMatch[2] ?? "").split(/\s+/).filter(Boolean);
+        const dryRun = toggleArgs.includes("--dry-run");
+        const identifiers = toggleArgs.filter((arg) => arg !== "--dry-run");
+
+        if (identifiers.length !== 1) {
+          ctx.ui.notify(
+            `Usage: /memory ${disabled ? "disable" : "enable"} [--dry-run] <global-memory-id-or-key>`,
+            "error",
+          );
+          return;
+        }
+
+        reloadAll(ctx.cwd);
+        const matches = findGlobalMemories(identifiers[0]!);
+        if (matches.length === 0) {
+          ctx.ui.notify(`No global memory found with id or key "${identifiers[0]}"`, "error");
+          return;
+        }
+        if (matches.length > 1) {
+          ctx.ui.notify(`Multiple global memories have key "${identifiers[0]}"; use an exact memory ID`, "error");
+          return;
+        }
+
+        const memory = matches[0]!;
+        let change;
+        try {
+          change = setGlobalMemoryDisabled(ctx.cwd, memory.id, disabled, { dryRun });
+        } catch (error) {
+          ctx.ui.notify(`Could not update memory settings: ${(error as Error).message}`, "error");
+          return;
+        }
+        const action = disabled ? "disable" : "enable";
+        const verb = change.changed ? (disabled ? "Disabled" : "Enabled") : (disabled ? "Already disabled" : "Already enabled");
+        const suffix = dryRun ? " (dry-run; no changes written)" : "";
+        ctx.ui.notify(`${dryRun ? `Would ${action}` : verb} ${memoryKey(memory)} here${suffix}`, "info");
+        if (!dryRun) {
+          reloadAll(ctx.cwd);
+          currentCtx = ctx;
+          refreshStatus();
+        }
+        return;
+      }
 
       if (command === "scan") {
         if (ctx.mode !== "tui") {
@@ -1881,7 +1985,7 @@ export default function (pi: ExtensionAPI) {
 
       if (!args.startsWith("add ")) {
         ctx.ui.notify(
-          "Usage: /memory add [--global] [--core] [--key <k>] <content> | /memory scan",
+          "Usage: /memory add [--global] [--core] [--key <k>] <content> | /memory scan | /memory disable [--dry-run] <id-or-key> | /memory enable [--dry-run] <id-or-key>",
           "error",
         );
         return;

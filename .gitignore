@@ -1,2 +1,6 @@
 .DS_Store
 node_modules
+# Runtime telemetry written by the pi-codex-usage extension (contains ChatGPT account ID)
+pi/extensions/codex-usage/usage/
+# Per-directory exclusions for personal global memories
+**/.pi/memory-settings.json

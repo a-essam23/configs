@@ -1,5 +1,5 @@
 {
-  "model": "deepseek/deepseek-v4-flash",
+  "model": "ollama-cloud/deepseek-v4.1-flash",
   "thinking": false,
   "maxDiffChars": 90000,
   "editMessage": false,

@@ -3,13 +3,13 @@
  *
  * Replaces Pi's built-in skills XML system prompt with a clean markdown list,
  * and provides a `load_skill` tool for the LLM to load skill instructions on demand.
- * Supports custom ordering of skills via a `reorder_skills` tool and `/skills` command.
+ * Supports custom ordering of skills via the `/skills` command.
  *
  * Pi still discovers skills normally. This extension:
  * 1. Strips the `<available_skills>` XML block from the system prompt
  * 2. Inserts a plain markdown list of skill names + descriptions (respecting order)
  * 3. Registers a `load_skill` tool the LLM calls to load a specific skill's SKILL.md
- * 4. Registers a `reorder_skills` tool and `/skills` command to set skill order
+ * 4. Registers a `/skills` command to set skill order
  */
 
 import {
@@ -258,111 +258,6 @@ export default function skillsExtension(pi: ExtensionAPI) {
         label = theme.fg("warning", "Skill not found");
       }
       return new Text(label, 0, 0);
-    },
-  });
-
-  // ── reorder_skills tool ─────────────────────────────────────────────────
-  pi.registerTool({
-    name: "reorder_skills",
-    label: "Reorder Skills",
-    description:
-      "View or change the order skills appear in. Call with list=true to " +
-      "see the current order, or provide a names array to set a new order. " +
-      "Skills not in the list appear at the end in their default order.",
-    promptSnippet: "View or change skill display order",
-    promptGuidelines: [
-      "Use reorder_skills(list=true) to see the current skill order.",
-      'Use reorder_skills(names=["skill-a", "skill-b"]) to set a custom order.',
-      "Skills not listed in the order array appear after the ordered ones.",
-    ],
-    parameters: Type.Object({
-      list: Type.Optional(
-        Type.Boolean({
-          description: "If true, show the current skill order.",
-        }),
-      ),
-      names: Type.Optional(
-        Type.Array(Type.String(), {
-          description:
-            "Array of skill names in desired display order. Unknown names are ignored.",
-        }),
-      ),
-    }),
-
-    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-      if (params.list) {
-        const order = loadOrder();
-        const allNames = skillsList.map((s) => s.name);
-        if (order.length === 0) {
-          return {
-            content: [
-              {
-                type: "text",
-                text:
-                  "No custom order set. Skills appear in their default order.\n" +
-                  `Available: ${allNames.join(", ")}\n\n` +
-                  'Use reorder_skills(names=[...]) to set a custom order.',
-              },
-            ],
-            details: { order: null, available: allNames },
-          };
-        }
-        return {
-          content: [
-            {
-              type: "text",
-              text:
-                "Current skill order:\n" +
-                order.map((n, i) => `${i + 1}. ${n}`).join("\n") +
-                "\n\n" +
-                'Use reorder_skills(names=[...]) to change it.',
-            },
-          ],
-          details: { order, available: allNames },
-        };
-      }
-
-      if (params.names) {
-        // Validate: warn about unknown names but still save
-        const known = new Set(skillsList.map((s) => s.name));
-        const unknown = params.names.filter((n) => !known.has(n));
-        const valid = params.names.filter((n) => known.has(n));
-
-        // Preserve order of known names, keep unknown entries at their relative positions
-        // (they'll be ignored at display time but the order indexing stays stable)
-        saveOrder(params.names);
-
-        // Refresh skillsList for the current session
-        const order = loadOrder();
-        skillsList = applyOrder(skillsList, order);
-
-        let msg: string;
-        if (valid.length === 0) {
-          msg = "No valid skill names provided. Order unchanged.";
-        } else {
-          msg = `Skill order updated:\n${valid.map((n, i) => `${i + 1}. ${n}`).join("\n")}`;
-        }
-        if (unknown.length > 0) {
-          msg += `\n\n(Unknown names ignored: ${unknown.join(", ")})`;
-        }
-
-        return {
-          content: [{ type: "text", text: msg }],
-          details: { order: params.names },
-        };
-      }
-
-      return {
-        content: [
-          {
-            type: "text",
-            text:
-              "Use reorder_skills(list=true) to see current order, or " +
-              'reorder_skills(names=["skill-a", "skill-b"]) to set a new one.',
-          },
-        ],
-        details: {},
-      };
     },
   });
 

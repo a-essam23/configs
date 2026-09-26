@@ -4,14 +4,14 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "0.74.0",
+    "@earendil-works/pi-coding-agent": "0.85.1",
     "@juicesharp/rpiv-ask-user-question": "^1.4.0",
     "@mariozechner/pi-tui": "^0.73.1",
     "@ollama/pi-web-search": "^0.0.5",
@@ -19,6 +19,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
+    "jiti": "2.7.0",
     "typescript": "^7.0.2"
   }
 }

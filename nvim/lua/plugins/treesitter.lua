@@ -17,6 +17,10 @@ return {
       "gowork",
       -- templ
       "templ",
+      -- JavaScript / React
+      "javascript",
+      "typescript",
+      "tsx",
     }
 
     require("nvim-treesitter").setup()

@@ -1,6 +1,6 @@
 ---
 name: executing-plans
-description: "Use this when implementing a written plan. Audit the plan against the codebase before accepting it, obtain explicit approval, execute incrementally, and pause on material deviations."
+description: "Use this when implementing a written plan. Audit the plan against the codebase before accepting it, obtain explicit approval, execute run-through pausing only on blockers, then auto-run review without auto-fix."
 ---
 
 # Executing Written Plans
@@ -44,10 +44,11 @@ Before accepting the plan:
 - Wait for the answer and re-audit dependent premises before asking the next decision.
 - Cite the source of every claimed user preference, constraint, or prior decision. Do not assert "the user said" without evidence from the conversation, a memory, or a document.
 - A plan's stated choice is not proof that the user approved it. If it selects among alternatives allowed by the source, require a recorded user-confirmed decision before accepting it.
-- Validate that every behavior-changing phase plans the required automated test work, and that mutations define their normal-request, HTMX-request, and error-response behavior where applicable.
+- For bug fixes, require a named repro: run it before touching code and save the output, then re-run the same repro after the fix and report the diff. If a repro is not feasible, state why and record a user waiver; do not invent a fake repro.
+- Validate that implementation phases plan verification without new tests (repro, existing suite, or manual check), that the final phase plans behavior-preserving tests for approved behavior, and that mutations define their normal-request, HTMX-request, and error-response behavior where applicable.
 - Validate every planned command against the repository's documented workflow and operational constraints.
 - Do not describe migrations, data changes, or other operational work as zero-risk.
-- **Hard gate:** if any defect, ambiguity, missing test work, incomplete mutation contract, invalid verification command, or unverified prerequisite remains, report **Blocked — clarification required**. Do not present an implementation pre-flight or ask to begin work.
+- **Hard gate:** if any defect, ambiguity, missing verification, incomplete mutation contract, invalid verification command, or unverified prerequisite remains, report **Blocked — clarification required**. Do not present an implementation pre-flight or ask to begin work.
 - Revise the execution approach only after the user confirms the correction.
 - If the plan is not sufficiently actionable after review, do not begin implementation.
 
@@ -63,15 +64,16 @@ Only after every hard-gate item is resolved, before writing code or modifying fi
 
 Ask for explicit approval to begin. Do not make changes before receiving it.
 
-### 4. Execute incrementally
+If the approved plan specifies a worktree, handoff immediately after approval with `worktree_handoff(branch, compact: true)`: confirm Base and Path, compact with pi-vcc, then `/worktree <branch>` forks the compacted session into the new worktree. Continue execution in the new session and re-audit the plan there before touching code, since uncommitted files do not carry over (new worktree is HEAD only, conversation is carried over). If the user cancels the handoff confirm, stay in place and ask whether to proceed anyway. If interactive UI or a materialized session is missing, stay in place with an explicit note.
 
-- Before each approved phase, present a phase pre-flight: its bounded scope, required skills loaded, applicable project rules and memories, expected verification, and any new risks or assumptions.
-- Do not touch the phase until every newly identified decision or concern is resolved with the user.
-- Work through the approved steps in order.
+### 4. Execute run-through
+
+- Work through all approved phases in order without per-phase pre-flights or per-phase approval gates. Pause only on Section 5 blockers.
+- Load each phase's required skills immediately before touching that phase.
 - Before each step, inspect nearby code and follow local conventions, abstractions, and existing libraries.
 - Change only what the approved step requires. Do not add speculative cleanup, refactors, compatibility layers, or adjacent features.
-- Verify each completed step with the narrowest relevant check, then report the result before continuing.
-- Keep the user informed of meaningful progress, failures, and findings.
+- Verify each completed implementation step with the narrowest relevant check without writing new tests (repro, existing suite, or manual check). Write new tests only in the final phase, after the user approves the implemented behavior.
+- Keep the user informed of meaningful progress, failures, and findings, but do not stop and wait for review until Section 6.
 
 ### 5. Pause on deviations
 
@@ -89,7 +91,8 @@ State what changed in understanding, provide evidence and options where useful, 
 
 - Run the proportionate final verification defined in the pre-flight brief.
 - Review the completed work against the validated goal and each approved plan item.
-- Report changed files, verification commands and results, plan deviations approved by the user, and any remaining limitations or follow-up work.
+- Load the `review` skill and audit the unmerged diff per its Scope and plan-check steps. Report findings as-is with file:line references; do not fix, edit, commit, or change branches.
+- Report changed files, verification commands and results, review findings, plan deviations approved by the user, and any remaining limitations or follow-up work. Then stop and wait for user review.
 - Do not commit, deploy, or perform other external actions unless the user explicitly asks.
 
 ## Key Principles
@@ -99,8 +102,8 @@ State what changed in understanding, provide evidence and options where useful, 
 - **Defects propagate** — resolve flawed early premises before executing dependent steps.
 - **No inferred decisions** — ambiguity requires clarification, not invention.
 - **One decision at a time** — prioritize blockers, recommend a resolution, and wait before asking the next question.
-- **Prerequisites are enforceable** — required memories, skills, tests, and response contracts must be present before work begins.
+- **Prerequisites are enforceable** — required memories, skills, verification, and response contracts must be present before work begins; new tests are required only in the final phase.
 - **Approval before mutation** — obtain explicit user approval after the pre-flight review.
-- **Incremental verification** — prove each step before building on it.
+- **Run-through verification** — prove each step with narrow checks while completing all phases; pause only on Section 5 blockers.
 - **Bounded scope** — implement the approved plan, not adjacent ideas.
 - **Transparent deviations** — pause and surface changes in understanding immediately.

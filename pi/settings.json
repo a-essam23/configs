@@ -1,15 +1,20 @@
 {
-  "lastChangelogVersion": "0.84.3",
-  "defaultProvider": "deepseek",
-  "defaultModel": "deepseek-v4-flash",
+  "lastChangelogVersion": "0.87.1",
+  "defaultProvider": "ollama-cloud",
+  "defaultModel": "deepseek-v4.1-flash",
   "defaultThinkingLevel": "high",
   "hideThinkingBlock": false,
   "packages": [
     "git:github.com/a-essam23/pi-codex-usage@e23210f",
     "git:github.com/a-essam23/pi-web-access-slim",
-    "git:github.com/sting8k/pi-vcc@b9e0bab",
-    "npm:pi-chrome@0.15.46"
+    "/Users/ae/configs/pi/vendor/pi-vcc",
+    "npm:pi-chrome@0.15.46",
+    "npm:pi-context-view",
+    "npm:pi-ollama-cloud-link"
   ],
   "theme": "dark",
-  "transport": "auto"
+  "transport": "auto",
+  "fullscreenScrollbar": "auto",
+  "tuiMode": "fullscreen",
+  "outputPad": 1
 }

@@ -1,5 +1,6 @@
 require("config.lazy")
 require("config.lsp-setup")
+require("config.terminal")
 vim.opt.clipboard = "unnamedplus"
 vim.opt.termguicolors = true
 vim.o.wildmenu = true

@@ -68,10 +68,12 @@ Do not include phases, a blueprint, a summary of several decisions, an invitatio
 Present a concise pre-write proposal containing:
 
 - The validated goal, in-scope work, and explicit exclusions.
+- Worktree placement: recommend in-place vs `.worktrees/<branch>`. Ask for big tasks, new features, or multi-phase work; default to in-place for trivial or single-file fixes without asking. If worktree is chosen, record the branch and base HEAD but do not create it during planning.
+- For bug fixes, shape phases as: reproduce first, then implementation, then re-verify with the same repro. Name the repro script or command in the proposal.
 - The ordered phases, their outcomes, dependencies, and the decisions each depends on.
 - The execution prerequisites: source specifications/references, applicable memories, required skills, and baseline verification assumptions.
 - Any risks, migrations, security implications, irreversible actions, or rollout constraints. Never describe these as zero-risk.
-- The test seams and cases required by every behavior-changing phase, plus each mutation's normal-request, HTMX-request, and error-response contract where applicable.
+- The test strategy: no new tests in implementation phases. Each implementation phase lists verification without new tests (repro script, existing suite, or manual check). Plan one final phase that writes behavior-preserving tests only after the user approves the implemented behavior, plus each mutation's normal-request, HTMX-request, and error-response contract where applicable.
 
 Ask for explicit approval to create or revise the plan document. Do not write or edit a plan file before receiving it.
 
@@ -90,7 +92,8 @@ After approval, write only the information needed to preserve execution intent. 
    - applicable memories and skills;
    - relevant files, documents, interfaces, or external references;
    - implementation steps only where they preserve a necessary decision or ordering;
-   - test changes and cases, when the phase changes behavior, data, or a boundary;
+   - verification without new tests for implementation phases (repro output, existing suite, or manual check);
+   - new tests only in the final phase, mapped to user-approved behavior;
    - normal-request, HTMX-request, and error-response behavior for mutations, when applicable;
    - phase-specific verification and acceptance criteria.
 5. **Final verification** — cross-phase checks required to establish that the goal is complete.
@@ -105,7 +108,7 @@ Use exact paths and references when they are known and material. Refer to establ
 - Omit mechanical line-by-line edits, routine boilerplate, generated-code detail, and obvious commands unless they carry risk or preserve a decision.
 - Do not include implementation alternatives after a decision has been made.
 - Do not use a plan to postpone decisions. Resolve them with the user first.
-- Do not substitute a passing command or a manual smoke test for planned automated test coverage.
+- Do not substitute a passing command or a manual smoke test for the final planned automated test coverage. Implementation phases may use repro scripts or smoke checks as their verification.
 - Use only verification commands supported by the repository's documented workflow and operational constraints.
 - Do not commit the plan document unless the user explicitly asks.
 
@@ -116,7 +119,7 @@ Do not create, revise, or mark a plan `Ready` unless all of the following are tr
 - Every material claim is verified and every material decision has a recorded source; user-confirmed decisions are recorded where alternatives existed.
 - No open questions, placeholders, unchosen alternatives, or scope-dependent "may" statements remain.
 - Execution prerequisites name all applicable memories and required skills globally and at the relevant phase.
-- Each behavior-changing phase identifies required automated test work; each applicable mutation defines normal, HTMX, and error behavior.
+- No implementation phase promises new tests; the final phase identifies automated test work that preserves approved behavior; each applicable mutation defines normal, HTMX, and error behavior.
 - Verification commands have been checked against repository guidance.
 
 If any item fails, stop for clarification rather than writing a partial or nominally-ready plan.
