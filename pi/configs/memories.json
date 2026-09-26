@@ -68,5 +68,12 @@
     "key": "dry-run-prerequisite",
     "type": "core",
     "timestamp": "2026-08-23T21:38:40.326Z"
+  },
+  {
+    "id": "global:a1f8954e-09b1-43dd-bb78-5c58da576011",
+    "content": "Before any remote write (push, force-push, branch create/delete), show the exact command and target repo/ref and get explicit approval — the user reacts strongly to unannounced remote mutations.",
+    "key": "remote-write-confirmation",
+    "type": "core",
+    "timestamp": "2026-09-26T19:53:00.613Z"
   }
 ]
