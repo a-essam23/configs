@@ -7,7 +7,7 @@
   "packages": [
     "git:github.com/a-essam23/pi-codex-usage@e23210f",
     "git:github.com/a-essam23/pi-web-access-slim",
-    "/Users/ae/configs/pi/vendor/pi-vcc",
+    "git:github.com/a-essam23/pi-vcc@326d3b68a8719b3d370bb2a6c1e97573689982e5",
     "npm:pi-chrome@0.15.46",
     "npm:pi-context-view",
     "npm:pi-ollama-cloud-link"

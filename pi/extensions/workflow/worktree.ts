@@ -6,7 +6,7 @@ import {
 	type ExtensionCommandContext,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { PI_VCC_COMPACT_INSTRUCTION } from "../../vendor/pi-vcc/src/core/compact-args.ts";
+import { PI_VCC_COMPACTOR, PI_VCC_COMPACT_INSTRUCTION } from "./pi-vcc-contract.ts";
 
 export function primaryRepositoryRoot(commonGitDir: string): string {
 	return dirname(resolve(commonGitDir));
@@ -147,7 +147,7 @@ async function queueWorktreeHandoff(pi: ExtensionAPI, branch: string): Promise<v
 }
 
 function wasCompactedWithPiVcc(details: unknown): boolean {
-	return typeof details === "object" && details !== null && "compactor" in details && details.compactor === "pi-vcc";
+	return typeof details === "object" && details !== null && "compactor" in details && details.compactor === PI_VCC_COMPACTOR;
 }
 
 async function switchToSession(ctx: ExtensionCommandContext, sessionFile: string, message: string): Promise<void> {
