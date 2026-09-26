@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import registerCommit from "./commit.ts";
 import registerHandoff from "./handoff.ts";
 import registerMemories from "./memories.ts";
+import registerPermissionGate from "./permission-gate.ts";
 import registerQuestionnaire from "./questionnaire.ts";
 import registerRulesMd from "./rules-md.ts";
 import registerSkills from "./skills.ts";
@@ -13,6 +14,7 @@ export default function workflowExtension(pi: ExtensionAPI): void {
   registerCommit(pi);
   registerHandoff(pi);
   registerMemories(pi);
+  registerPermissionGate(pi);
   registerQuestionnaire(pi);
   registerRulesMd(pi);
   registerSkills(pi);

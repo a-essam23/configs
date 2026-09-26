@@ -17,11 +17,12 @@
  *   dd writing to /dev/ block devices
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
 	const dangerousPatterns = [
-		/\brm\s+(-rf?|--recursive)/i,
+		/\brm\s+(?:-[a-zA-Z]+\s+)*-[a-zA-Z]*r/i, // rm -r / -rf / -fr / -f -r, flag order independent
+		/\brm\s+(?:-[a-zA-Z]+\s+)*--recursive\b/i,
 		/\bsudo\b/i,
 		/\b(chmod|chown)\b.*777/i,
 		/\bgit\s+push\s+.*-(f\b|-force)/i,
