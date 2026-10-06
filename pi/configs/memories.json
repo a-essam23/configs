@@ -75,5 +75,82 @@
     "key": "remote-write-confirmation",
     "type": "core",
     "timestamp": "2026-09-26T19:53:00.613Z"
+  },
+  {
+    "id": "global:8f71a5d0-8e11-4499-8801-797c67af3023",
+    "content": "Verify which request captured a stored referrer before trusting it — a same-origin fetch sends the current page as Referer, so tracking-time capture records the page itself, not the visitor's source.",
+    "key": "referrer-capture",
+    "type": "regular",
+    "timestamp": "2026-09-28T15:10:59.461Z"
+  },
+  {
+    "id": "global:7ad6f9b3-6a6a-49d7-8e48-2ed5d6e10a65",
+    "content": "Wants plain, short, direct answers — including to design questions: no hedging, no table/heading overhead, fewest words that carry the fact.",
+    "key": "explanation-style",
+    "type": "regular",
+    "timestamp": "2026-09-29T00:40:14.562Z"
+  },
+  {
+    "id": "global:b106d49d-7b3b-405b-bf85-64fc378cb87b",
+    "content": "During exploratory or understanding-focused conversations, don't close messages with offers to implement or push next steps; let the user drive toward execution.",
+    "key": "no-implementation-pressure",
+    "type": "core",
+    "timestamp": "2026-09-29T01:22:37.770Z"
+  },
+  {
+    "id": "global:01b5ac0b-1f90-4845-9276-a2c7ada73f0f",
+    "content": "Trace every new identifier to an existing codebase name and show the trace before writing code; invented names are a recurring complaint.",
+    "key": "terminology-trace",
+    "type": "core",
+    "timestamp": "2026-09-30T03:35:13.131Z"
+  },
+  {
+    "id": "global:d2affde2-d614-4027-9cb1-b29eb65b5357",
+    "content": "Verify event handlers by dispatching the real event from the element that dispatches it; calling the method directly can pass with the wrong receiver/scope.",
+    "key": "handler-verification",
+    "type": "core",
+    "timestamp": "2026-10-02T14:35:28.533Z"
+  },
+  {
+    "id": "global:f49203e9-c7dd-4b0d-9dfb-6ab86f2c0876",
+    "content": "When previewing HTML, render only the element in focus — no page wrapper, chrome, fill, or sizing.",
+    "key": "render-element-only",
+    "type": "core",
+    "timestamp": "2026-10-03T05:03:42.261Z"
+  },
+  {
+    "id": "global:37359080-d24e-42a1-9a67-ca915ba5f270",
+    "content": "Send multi-line herdr agent prompts from a file via \"$(cat file)\" — inline heredocs with quotes break the bash tool.",
+    "key": "herdr-agent-prompt-text",
+    "type": "regular",
+    "timestamp": "2026-10-03T06:02:06.160Z"
+  },
+  {
+    "id": "global:4d650b53-48a8-40bd-96eb-77fe06c504ff",
+    "content": "herdr `agent wait`/`agent get` can report idle/done mid-turn — verify a neighbouring agent's turn end by polling its pane tail instead.",
+    "key": "herdr-agent-status-lag",
+    "type": "regular",
+    "timestamp": "2026-10-03T06:08:56.352Z"
+  },
+  {
+    "id": "global:cdfbe64d-34f9-41f3-bff3-493f5ffae30a",
+    "content": "After editing SVG path data, verify it by comparing the whitespace-stripped d strings against the source rather than rendering a screenshot.",
+    "key": "svg-path-edit-verification",
+    "type": "regular",
+    "timestamp": "2026-10-06T00:57:09.494Z"
+  },
+  {
+    "id": "global:e89e218c-e828-420b-a31b-b75b07ce400e",
+    "content": "Verify parameterized SQL by PREPARE/EXECUTE, never by substituting literals — literals skip parameter type inference and hide errors pgx will hit.",
+    "key": "sql-param-verification",
+    "type": "regular",
+    "timestamp": "2026-10-06T01:04:38.259Z"
+  },
+  {
+    "id": "global:ccfd222c-33cc-48f2-84f1-f9dbd8af7016",
+    "content": "When chrome_upload_file fails to resolve a file input, attach the file in-page instead: draw or fetch a Blob, set input.files via DataTransfer, then form.requestSubmit().",
+    "key": "chrome-file-upload-fallback",
+    "type": "regular",
+    "timestamp": "2026-10-06T01:37:37.264Z"
   }
 ]
